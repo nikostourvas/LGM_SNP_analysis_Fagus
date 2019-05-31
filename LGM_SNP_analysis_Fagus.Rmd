@@ -1,0 +1,237 @@
+---
+title: "LifeGenMon Fagus SNP analysis"
+author: "Nikos Tourvas"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+# bibliography: library.bib
+output:
+  html_notebook:
+    code_folding: hide
+    theme: united
+    toc: yes
+    toc_float: yes
+    toc_depth: 3
+  html_document:
+    code_folding: hide
+    theme: united
+    toc: yes
+    ## toc_float: yes
+  pdf_document:
+    toc: yes
+always_allow_html: yes
+---
+
+```{r}
+library(popprxl)
+library(adegenet)
+library(pegas)
+library(tidyverse)
+```
+
+
+# Import csv
+```{r import_csv}
+snp <- read.csv("data/Genotyping-2137.011-02 Grid_edited.csv", 
+                header = T,
+                na.strings = c("?", "Uncallable", "Bad", "Missing")
+               # ,stringsAsFactors = T
+               , check.names = F # default is TRUE, and changes the dashes to dots - which created problems
+               )
+# snp
+```
+
+### Create a df following the guidelines of the loci format
+```{r}
+snp_loci_format <- as.data.frame(sapply(snp, gsub, pattern=':', replacement='/') )
+# snp_loci_format <- as.data.frame(sapply(snp_loci_format, gsub, pattern=".", replacement="_"))
+snp_loci_format <- snp_loci_format[,-1]
+rownames(snp_loci_format) <- snp[,1]
+
+# snp_loci_format
+```
+
+```{r}
+## Add a second column for population
+
+pop1 <- replicate(147, "GR_A")
+pop2 <- replicate(147, "DE_A")
+pop3 <- replicate(72, "DE_NR")
+pop4 <- replicate(72, "GR_NR")
+pop5 <- replicate(147, "SI_A")
+pop6 <- replicate(72, "SI_NR")
+
+
+pop <- c(pop1, pop2, pop3, pop4, pop5, pop6)
+
+# pop
+
+snp_loci_format <- add_column(snp_loci_format, pop, .before = "4_272")
+
+# snp_loci_format
+```
+
+## Create genind object
+```{r}
+library(pegas)
+
+data <- as.loci(snp_loci_format, 
+                col.pop = 1
+                ,allele.sep = "/")
+# data
+
+obj_origin <- loci2genind(data,)
+# obj_origin
+
+paste("Number of individuals per cohort:")
+obj_origin %>% 
+  
+        seppop() %>% 
+        lapply(nInd)
+```
+
+### stratify data set
+```{r test}
+strata_df <- as.data.frame(snp_loci_format$pop[-1]) # [-1] because 1 ind was removed from DE_A
+colnames(strata_df) <- "strata"
+strata_df <- separate(strata_df, col = strata, sep="_", 
+                      into = c("Country", 
+                               "Pop"))
+strata(obj_origin) <- strata_df
+
+setPop(obj_origin) <- ~Country/Pop
+obj_origin
+```
+
+# Data filtering
+
+### Check for missing data
+```{r missing, cache=F, fig.width=10, dpi=300}
+capture.output(
+info_table(obj_origin, type = "missing", plot = TRUE, plotlab = F),
+file='NUL') 
+## capture.output is used to hide printing of the table on the console
+
+div <- summary(obj_origin)
+
+# paste("Total missing data is",  round(div$NA.perc, digits = 2), "%", sep = " ")
+```
+
+### Percent (%) of missing data by pop
+```{r missing_by_pop}
+library(kableExtra)
+library(purrr)
+missing_by_pop <- as.data.frame(
+  seppop(obj_origin) %>% 
+  lapply(adegenet::summary) %>% 
+  map_depth(1, "NA.perc")
+)
+
+knitr::kable(missing_by_pop, digits = 2, format = "html") %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+### How many loci are biallelic?
+```{r fig.height=3, fig.width=3, cache=T, dpi=300}
+alleles_per_locus <- nAll(obj_origin)
+
+number_df <- as.data.frame(alleles_per_locus)
+
+ggplot(number_df, aes(x=alleles_per_locus) ) +
+  geom_bar(color="black", fill="white",
+           width = 0.5) +
+  scale_x_continuous(breaks = c(1,2,3,4))
+
+perc_bi <- number_df %>% 
+  group_by(alleles_per_locus) %>% 
+  count() %>% 
+  mutate("percent_(%)" = round(n / nLoc(obj_origin) * 100,  digits = 2))%>% 
+  rename("alleles per locus" = alleles_per_locus,
+         occurences = n,
+         "occurences (%)" = "percent_(%)")
+
+
+knitr::kable(perc_bi, "html", digits = 2) %>% 
+        kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+### Remove uninformative (monomorphic) loci
+```{r maf}
+obj <- informloci(obj_origin, MAF = 0)
+```
+
+### Filter out missing data
+```{r missing2, cache=F, fig.width=10, dpi=300}
+obj <- missingno(obj, type = "loci", cutoff = 0.10)
+
+obj <- missingno(obj, type = "genotypes", cutoff = 0.10)
+
+test <- seppop(obj) %>% 
+  lapply(propTyped, by="loc") %>% 
+  lapply(sort)
+
+obj_test <- obj[,loc="51_2_937"]
+info <- info_table(obj, type = "missing", plot = TRUE, plotlab = F)
+```
+
+```{r}
+# Remove loci with specified % of missing data by pop
+miss <- as.data.frame(t(info))
+miss$loc <- rownames(miss)
+
+miss_res <- miss %>% 
+  filter_if(is.double, any_vars(. > 0.10))
+
+miss_res$loc
+
+# create list of loci to keep
+keeploc <- setdiff(locNames(obj), miss_res$loc)
+
+# filter loci in genind object
+obj_new <- obj[loc = keeploc]
+```
+
+### Data set details after data cleaning:
+```{r}
+paste(nInd(obj), "individuals", sep=" ")
+paste(nLoc(obj), "loci", sep=" ")
+
+paste("Number of individuals per cohort:")
+obj %>% 
+  
+        seppop() %>% 
+        lapply(nInd)
+```
+
+## Export to df for use in GenAlEx
+```{r}
+# convert back to loci format
+obj_loci <- genind2loci(obj)
+
+# Split alleles 
+library(splitstackshape)
+
+vec <- colnames(obj_loci[-1])
+
+df <- cSplit(indt = obj_loci, splitCols = vec,
+                sep = "/", 
+# needed so that it does not convert "T" to logical ("TRUE")
+               type.convert = F) 
+
+# add genotype col
+df <- add_column(df, rownames(obj_loci), .before = "population")
+
+colnames(df) <- c("Genotype", "Population", 
+                  rep(colnames(obj_loci[-1]), each = 2) )
+
+# replace NAs with 0
+df[is.na(df)] <- 0
+
+# recode nucleotide bases to numbers
+df[df=="A"] <- 1
+df[df=="T"] <- 2
+df[df=="G"] <- 3
+df[df=="C"] <- 4
+
+head(df)
+
+write.csv(df, file="LGM_SNP_Fagus.csv", row.names = F)
+```
