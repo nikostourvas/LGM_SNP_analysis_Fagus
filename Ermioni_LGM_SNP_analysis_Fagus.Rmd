@@ -106,7 +106,7 @@ obj_origin
 ### Check for missing data
 ```{r missing, cache=F, fig.width=10, dpi=300}
 capture.output(
-info_table(obj_origin, type = "missing", plot = TRUE, plotlab = F),
+info_table(obj_origin, type = "missing", plot = F, plotlab = F),
 file='NUL') 
 ## capture.output is used to hide printing of the table on the console
 
@@ -169,15 +169,15 @@ test <- seppop(obj) %>%
   lapply(sort)
 
 obj_test <- obj[,loc="51_2_937"]
-info <- info_table(obj, type = "missing", plot = TRUE, plotlab = F)
+info <- info_table(obj, type = "missing", plot = FALSE, plotlab = F)
 ```
 
-```{r}
+```{r, eval=FALSE}
 # Remove loci with specified % of missing data by pop
 miss <- as.data.frame(t(info))
 miss$loc <- rownames(miss)
 
-miss_res <- miss %>% 
+miss_res <- miss %>%
   filter_if(is.double, any_vars(. > 0.10))
 
 miss_res$loc

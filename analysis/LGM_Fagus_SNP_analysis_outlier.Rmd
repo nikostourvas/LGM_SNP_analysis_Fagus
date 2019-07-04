@@ -1,0 +1,424 @@
+---
+title: "LifeGenMon Fagus SNP analysis - Fst outliers"
+author: "Nikos Tourvas"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+bibliography: library.bib
+output:
+  html_notebook:
+    code_folding: hide
+    theme: united
+    toc: yes
+    toc_float: yes
+    toc_depth: 3
+  html_document:
+    code_folding: hide
+    theme: united
+    toc: yes
+    ## toc_float: yes
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include = FALSE, echo=FALSE)
+```
+
+```{r}
+source("import_snp.R")
+```
+
+```{r}
+threshold_loci <- 0.1
+threshold_ind <- 0.1
+maf <- 0.00775193798449612
+obj <- import.snp.fagus(threshold_ind, threshold_loci, maf)
+```
+
+# F~ST~ Outliers - Signals of Selection
+
+## Data filtering thresholds
+```{r include=T}
+paste("SNP loci:", threshold_loci*100, 
+      "% missing data across populations", sep=" ")
+
+
+paste("Individuals:", threshold_ind*100, "% missing data", sep=" ")
+
+
+paste("SNP loci with minor allele frequency <", maf)
+```
+
+MAF corresponds to 5 samples (i.e. an allele has to be present in 5 or more individuals, or else it is discarded)
+
+## Data set details after data filtering:
+```{r include=T}
+
+paste(nInd(obj), "individuals", "and", nLoc(obj), "loci", sep=" ")
+```
+
+## PCAdapt [@luu_PcadaptPackagePerform_2017]
+
+Each of the three countries was considered a cohort.
+
+This method is based on principal component analysis (PCA).  The user should specify the number K of principal components (PC) to work with: first perform with a large number of principal components (e.g. higher than the number of populations), then use the ‘scree plot’ to chose the value of K. It displays the percentage of variance that is explained by each PC. The recommended value of K corresponds to the largest value of K before the plateau of ‘scree plot’ is reached. Then for a given SNP, a statistical test to define the SNP as outlier or not is based on the “loadings” that are defined as the correlation between the SNP and the PCs. The statistic test for detecting outlier SNPs is the Mahalanobis distance (between the K correlations of the SNP and each axis and mean correlations) and, which scaled by a constant, should have a chi-square distribution with K degrees of freedom under the assumption that there are no outlier. By default P-values of SNPs with a minor allele frequency smaller than 0.05 are not computed. A Manhattan plot displays log10 of the p-values. It is also possible to check the distribution of the p-values using a Q-Q plot. The authors suggest to use false discovery rate (q-value) to provide a list of outliers.
+
+By contrast to population‐based approaches, the method handles admixed individuals and does not require grouping individuals into populations.
+
+```{r eval=FALSE, include=FALSE}
+# install radiator
+# if (!require("pak")) install.packages("pak")
+# pak::pkg_install("thierrygosselin/radiator")
+library(radiator)
+```
+
+```{r}
+setPop(obj) <- ~Country
+
+library(radiator)
+library(dartR)
+obj_light <- gi2gl(obj) # convert to genlight via dartR
+
+# convert genlight to pcadapt
+genotype <- genomic_converter(data = obj_light, output = "pcadapt", verbose = F)
+
+# dim(genotype$pcadapt)
+```
+
+```{r}
+library("pcadapt")
+library("qvalue")
+
+pca_genotype <- read.pcadapt(genotype$pcadapt$genotype.matrix)
+K <- 25
+```
+
+```{r}
+x1 <- pcadapt(pca_genotype, K = K) # if it fails to run, copy this
+# line and run it in the console
+p1 <- plot(x1, option = "screeplot") # 4 groups seems to be the correct value
+```
+
+```{r}
+loci <- genind2loci(obj)
+
+p2 <- plot(x1, option = "scores", pop = loci[,1])
+
+setPop(obj) <- ~Country/Pop
+```
+
+```{r}
+K <- 4
+```
+
+```{r}
+x <- pcadapt(pca_genotype, K = K, min.maf = 0)
+
+summary(x) # numerical quantities obtained after performing a PCA
+```
+
+```{r}
+p3 <- plot(x, option = "manhattan")
+```
+
+```{r}
+p4 <- plot(x, option = "qqplot", threshold = 0.1)
+```
+
+```{r}
+p5 <- plot(x, option = "stat.distribution") # Distribution of Mahalanobis distances.
+```
+
+<!-- Combined plot -->
+```{r}
+library(ggpubr)
+```
+
+```{r fig.width=10, fig.height=10, include=T}
+ggarrange(p1, p2, p3, p4, p5, 
+          labels = c("A", "B", "C", "D", "E"),
+          ncol = 2, nrow = 3)
+
+```
+
+
+
+```{r}
+qval <- qvalue(x$pvalues)$qvalues
+alpha <- 0.05
+outliers_pcadapt <- which(qval < alpha)
+print(outliers_pcadapt)
+```
+
+```{r}
+length(outliers_pcadapt)
+```
+
+<!-- #### find which loci are outliers -->
+```{r, include=T}
+outliers_pcadapt <- locNames(obj)[outliers_pcadapt]
+outliers_pcadapt
+```
+
+
+
+## Outflank [@whitlock_ReliableDetectionLoci_2015]
+
+Each of the three countries was considered a cohort.
+
+It implements the method developed by Whitlock and Lotterhos (2015) to use likelihood on a trimmed distribution of FST values to infer the distribution of FST for neutral markers. This distribution is then used to assign q-values to each locus to detect outliers that may be due to spatially heterogeneous selection.
+
+```{bash eval=FALSE, include=FALSE}
+# required on ubuntu 18.10 to install dartR
+# sudo apt install libglu1-mesa-dev
+```
+
+```{r eval=FALSE, include=FALSE}
+# install dartR
+# install.packages("devtools")
+# library(devtools)
+# install.packages("BiocManager")
+# BiocManager::install(c("SNPRelate", "qvalue"))
+# 
+# install.packages("dartR")
+```
+
+```{r, include=T}
+library(dartR)
+
+setPop(obj) <- ~Country
+
+OF <- gl.outflank(obj, plot = TRUE, LeftTrimFraction = 0.05,
+  RightTrimFraction = 0.05, Hmin = 0.1, qthreshold = 0.05)
+
+setPop(obj) <- ~Country/Pop
+```
+
+```{r, include=T}
+outliers_OF <- OF$results$LocusName[OF$results$OutlierFlag == TRUE]
+print(outliers_OF)
+```
+No outlier loci were detected.
+
+## Bayescan [@foll_GenomeScanMethodIdentify_2008]
+
+Each of the three countries was considered a cohort.
+
+Default settings were used.
+
+```{r eval=F}
+# set appropriate hierachy for bayescan analysis
+setPop(obj) <- ~Country
+
+# convert to bayescan input file
+library(hierfstat)
+genind2hierfstat(obj) %>% 
+write.bayescan(diploid = T, fn="obj.bsc")
+
+# reset hierarchy
+setPop(obj) <- ~Country/Pop
+```
+
+```{bash eval=F}
+# move bayescan input file to data folder
+mv obj.bsc ../data/obj.bsc
+```
+
+```{bash eval=F}
+sudo chmod +x /home/rstudio/software/bayescan/BayeScan2.1/binaries/BayeScan2.1_linux64bits
+
+mkdir ../results/Bayescan_out/
+
+/home/rstudio/software/bayescan/BayeScan2.1/binaries/BayeScan2.1_linux64bits ../data/obj.bsc -od ../results/Bayescan_out/
+```
+
+```{r plot_R}
+source("/home/rstudio/software/bayescan/BayeScan2.1/R functions/plot_R.r")
+```
+
+```{r}
+results_bay <- plot_bayescan("../results/Bayescan_out/obj_fst.txt",FDR=0.05)
+```
+
+```{r, include=T}
+plot_bayescan(res="../results/Bayescan_out/obj_fst.txt",FDR=0.05, highlight = results_bay$outliers, add_text = T,name_highlighted = T, size = 0.7)
+
+# plot_bayescan("../results/Bayescan_out/obj_fst.txt", FDR=0.05, add_text = F)
+```
+
+```{r}
+# Check also the bayescan pipeline inside radiator
+```
+
+```{r, include=T}
+outliers_bayescan <- locNames(obj)[results_bay$outliers]
+outliers_bayescan
+```
+
+
+## Arlequin - Fdist [@beaumontmarka._EvaluatingLociUse_1996]
+
+Each of the three countries was considered a cohort. The analysis is based on the island model of Beaumont and Nichols (1996).
+
+<!-- In order to create the input file for the analysis run "export_to_genalex.Rmd" -->
+
+```{bash}
+sudo chmod +x /home/rstudio/software/arlecore/arlecore_linux/arlecore3522_64bit
+
+/home/rstudio/software/arlecore/arlecore_linux/arlecore3522_64bit ../data/LGM_SNP_Fagus_Countries.arp ../data/loci_selection_50000_100.ars
+```
+
+```{bash}
+mkdir ../results/Arlequin
+
+mv ../data/LGM_SNP_Fagus_Countries.res/ ../results/Arlequin/LGM_SNP_Fagus_Countries.res/
+```
+
+```{r}
+source("/home/rstudio/software/arlecore/arlecore_linux/Rfunctions/parseArlequin.r")
+```
+
+```{bash}
+cd ../results/Arlequin
+mkdir Graphics
+```
+
+```{r eval=F}
+#install.packages("XML")
+```
+
+```{r}
+library(XML)
+```
+
+```{r}
+parseArlequin(infile = "../results/Arlequin/LGM_SNP_Fagus_Countries.res/LGM_SNP_Fagus_Countries.xml",
+              outfiles ="../results/Arlequin/Graphics/", 
+              sourcePath ="/home/rstudio/software/arlecore/arlecore_linux/Rfunctions/" )
+```
+
+```{r, include=T}
+# print graphics on the notebook
+knitr::include_graphics(path="../results/Arlequin/Graphics/lociSelection_Names_FST 30-06-19 at 15-40-00.png")
+```
+
+```{r, include=T}
+# find which SNPs are outliers from Arlequin
+# INPUT THE NUMBERS BY HAND
+arl_out <- c(116, 122, 117)
+outliers_fdist2 <- locNames(obj)[arl_out]
+outliers_fdist2
+```
+
+### Multiple test correction
+```{r, include=T}
+# Requires manualy creating a csv file from Arlequin xml output
+fdist2_pvalues <- read.csv("../results/Arlequin/LGM_SNP_Fagus_Countries_pvalues_01072019.csv")
+
+fdist2_pvalues <- fdist2_pvalues %>% 
+  mutate(fdr = p.adjust(fdist2_pvalues$pvalue, 
+                        method = "fdr"))
+
+fdist2_sig <- fdist2_pvalues$locus[fdist2_pvalues$fdr < 0.05]
+outliers_fdist2 <- locNames(obj)[fdist2_sig]
+outliers_fdist2
+```
+After correction for multiple testing (FDR=0.05), 0 outlier SNP loci were detected.
+
+## Arlequin - HFdist Hierarchical model [@excoffier_DetectingLociSelection_2009]
+
+Each of the three countries was considered a cohort. Due to the fact that the Slovenian and German cohorts share more recent ancestry, the HFdist hierarchical model was employed.
+
+```{bash}
+sudo chmod +x /home/rstudio/software/arlecore/arlecore_linux/arlecore3522_64bit
+
+/home/rstudio/software/arlecore/arlecore_linux/arlecore3522_64bit ../data/LGM_SNP_Fagus_Countries.arp ../data/loci_selection_hierarchical_50000_100_50.ars
+```
+
+```{bash}
+#mkdir ../results/Arlequin
+
+mv ../data/LGM_SNP_Fagus_Countries.res/ ../results/Arlequin/LGM_SNP_Fagus_Countries_hierarchical.res/
+```
+
+```{r}
+source("/home/rstudio/software/arlecore/arlecore_linux/Rfunctions/parseArlequin.r")
+```
+
+```{bash}
+cd ../results/Arlequin
+mkdir Graphics
+```
+
+```{r eval=F}
+#install.packages("XML")
+```
+
+```{r}
+library(XML)
+```
+
+```{r}
+parseArlequin(infile = "../results/Arlequin/LGM_SNP_Fagus_Countries_hierarchical.res/LGM_SNP_Fagus_Countries.xml",
+              outfiles ="../results/Arlequin/Graphics/", 
+              sourcePath ="/home/rstudio/software/arlecore/arlecore_linux/Rfunctions/" )
+```
+
+```{r, include=T}
+# print graphics on the notebook
+knitr::include_graphics(path="../results/Arlequin/Graphics/lociSelection_Names_FST 30-06-19 at 15-51-29.png")
+```
+
+```{r, include=T}
+# find which SNPs are outliers from Arlequin
+# INPUT THE NUMBERS BY HAND
+arl_out <- c(60, 116, 122, 117)
+outliers_fdist2_hier <- locNames(obj)[arl_out]
+outliers_fdist2_hier
+```
+
+### Multiple test correction
+```{r, include=T}
+# Requires manualy creating a csv file from Arlequin xml output
+fdist2_hier_pvalues <- read.csv("../results/Arlequin/LGM_SNP_Fagus_Countries_hierarchical_pvalues_01072019.csv")
+
+fdist2_hier_pvalues <- fdist2_hier_pvalues %>% 
+  mutate(fdr = p.adjust(fdist2_hier_pvalues$pvalue, 
+                        method = "fdr"))
+
+fdist2_hier_sig <- fdist2_hier_pvalues$locus[fdist2_hier_pvalues$fdr < 0.05]
+outliers_fdist2_hier <- locNames(obj)[fdist2_hier_sig]
+outliers_fdist2_hier
+```
+After correction for multiple testing (FDR=0.05), 3 outlier SNP loci were detected.
+
+<!-- # cleaning -->
+```{bash}
+mv arl_run.ars arl_run.txt arlequin.ini randseed.txt arl_pro.txt ../results/Arlequin
+```
+
+
+## Which loci were detected as outliers by more than one method?
+
+#### pcadapt and arlequin
+```{r, include=T}
+Reduce(intersect, list(outliers_pcadapt,
+                       outliers_fdist2))
+```
+No common outlier loci detected
+
+#### pcadapt and arlequin hierarchical model
+```{r, include=T}
+Reduce(intersect, list(outliers_pcadapt,
+                       outliers_fdist2_hier))
+```
+No common outlier loci detected
+
+<!-- # Logistic regression : linking outliers and environmental factor -->
+<!-- https://popgen.nescent.org/2016-01-26-SNP-selection.html -->
+
+
+# Reproducibility
+```{r reproducibility, include=T}
+devtools::session_info()
+```
+
+# Bibliography

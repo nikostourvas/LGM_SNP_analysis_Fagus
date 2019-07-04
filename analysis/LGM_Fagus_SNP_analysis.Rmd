@@ -1,0 +1,1443 @@
+---
+title: "LifeGenMon Fagus SNP analysis"
+author: "Nikos Tourvas"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+bibliography: library.bib
+output:
+  html_notebook:
+    code_folding: hide
+    theme: united
+    toc: yes
+    toc_float: yes
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include = FALSE, echo = FALSE)
+```
+
+```{r libraries, echo=TRUE}
+  library(adegenet)
+  library(popprxl)
+  library(hierfstat)
+  library(magrittr)
+  library(pegas)
+  ## library(genepop)
+  library(mmod)
+  library(ape)
+  library(phangorn)
+  library(tidyverse)
+  library(reshape2)
+  library(strataG)
+  library(ggplot2)
+  library(lattice)
+  library(factoextra)
+  library(ggord)
+  library(RColorBrewer)
+  ## library(ggcompoplot)
+  library(kableExtra)
+  library(pophelper)
+  library(gridExtra)
+  library(radiator)
+  library("pcadapt")
+  library("qvalue")
+
+```
+
+```{r}
+# library(readr)
+# snp <- read_csv("data/Genotyping-1841.025-03 Grid_EDITED.csv", 
+#     na = c("?", "Uncallable", "Bad") )
+# 
+# snp
+```
+
+
+<!-- # Import csv -->
+```{r import_csv, cache=T}
+snp <- read.csv("../data/Genotyping-2137.011-02 Grid_reformated.csv", 
+                header = T, 
+                na.strings = c("?", "Uncallable", "Bad", "Missing")
+               # ,stringsAsFactors = T
+               , check.names = F # default is TRUE, and changes the dashes to dots - which created problems
+               )
+# snp
+```
+
+
+<!-- ## Transform sample names -->
+<!-- #### This will allow hierarchical analysis when applicable -->
+<!-- #### Country / Species / Pop / Plot -->
+```{r, cache=T}
+snp <- snp %>% 
+        mutate(Genotype = str_replace_all(Genotype, "NR", "NR_")) %>% 
+        mutate(Genotype = str_replace_all(Genotype, "^AFS", "GR_FSY_A_")) %>% #GR_Adult
+        mutate(Genotype = str_replace_all(Genotype, "^RFS", "GR_FSY_NR_")) %>%  #GR_Regen
+        mutate(Genotype = str_replace_all(Genotype, "_A_", "_A_1_")) %>% 
+        
+        mutate(Genotype = str_replace_all(Genotype, "GR_FSY_NR", "GR_FSY_NR_1"))
+```
+
+
+<!-- ## Remove samples that consistently do not amplify -->
+```{r remove_bad, cache=T}
+# 
+# snp_fil <- snp %>% 
+#         filter(snpa != "Bad")
+# 
+# snp_fil
+```
+
+<!-- ### Create a df following the guidelines of the loci format -->
+```{r, cache=T}
+snp_loci_format <- as.data.frame(sapply(snp, gsub, pattern=':', replacement='/') )
+# snp_loci_format <- as.data.frame(sapply(snp_loci_format, gsub, pattern=".", replacement="_"))
+snp_loci_format <- snp_loci_format[,-1]
+rownames(snp_loci_format) <- snp[,1]
+
+# snp_loci_format
+```
+
+```{r, cache=T}
+## Add a second column for population
+
+pop1 <- replicate(147, "DE_FSY_A")
+pop2 <- replicate(72, "DE_FSY_NR")
+pop3 <- replicate(147, "GR_FSY_A")
+pop4 <- replicate(72, "GR_FSY_NR")
+pop5 <- replicate(147, "SI_FSY_A")
+pop6 <- replicate(72, "SI_FSY_NR")
+
+
+pop <- c(pop1, pop2, pop3, pop4, pop5, pop6)
+
+# pop
+
+snp_loci_format <- add_column(snp_loci_format, pop, .before = "4_272")
+
+# snp_loci_format
+```
+
+<!-- ## Create genind object -->
+```{r, cache=T}
+library(pegas)
+
+data <- as.loci(snp_loci_format, 
+                col.pop = 1
+                ,allele.sep = "/")
+# data
+
+obj_origin <- loci2genind(data,)
+# obj_origin
+```
+
+<!-- ### stratify data set -->
+```{r test, cache=T}
+strata_df <- as.data.frame(snp_loci_format$pop[-1]) # [-1] because 1 ind was removed from DE_A
+colnames(strata_df) <- "strata"
+strata_df <- separate(strata_df, col = strata, sep="_", 
+                      into = c("Country", 
+                               "Species", 
+                               "Pop"))
+strata(obj_origin) <- strata_df
+
+setPop(obj_origin) <- ~Country/Pop
+obj_origin
+```
+
+# Data filtering
+
+<!-- ### Check for missing data -->
+```{r missing, cache=T, fig.width=10, dpi=300, eval=F}
+capture.output(
+info_table(obj_origin, type = "missing", plot = TRUE, plotlab = F),
+file='NUL') 
+## capture.output is used to hide printing of the table on the console
+
+div <- summary(obj_origin)
+
+# paste("Total missing data is",  round(div$NA.perc, digits = 2), "%", sep = " ")
+```
+
+```{r, include=T, fig.asp=1}
+info <- t(
+  info_table(obj_origin, type = "missing", plot = F, plotlab = F) )
+
+info <- as.data.frame(info[,-ncol(info)])
+
+info$locus <- rownames(info)
+
+info <- gather(info, key = pop, value = missing_data, -locus)
+
+mis <- info %>% 
+        ggplot(aes(x=locus, y=missing_data)) +
+        geom_bar(stat = "identity") +
+        geom_hline(yintercept = 0.10, colour = "red") +
+        theme(axis.text.x = element_text(colour = NA),
+              axis.ticks = element_line(colour = NA)) +
+        ggtitle("Missing data by cohort") +
+        facet_wrap(~pop, nrow=3 )
+
+mis
+```
+Some SNP loci exhibit high levels of missing data for some cohorts only. Maybe leverage this information per Country / Cohort basis?
+
+### Percent (%) of missing data by pop
+```{r missing_by_pop, include=T}
+library(purrr)
+missing_by_pop <- as.data.frame(
+  seppop(obj_origin) %>% 
+  lapply(adegenet::summary) %>% 
+  map_depth(1, "NA.perc")
+)
+
+knitr::kable(missing_by_pop, digits = 2, format = "html") %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+### How many loci are biallelic?
+```{r fig.height=3, fig.width=3, cache=T, dpi=300, include=T}
+alleles_per_locus <- nAll(obj_origin)
+
+number_df <- as.data.frame(alleles_per_locus)
+
+ggplot(number_df, aes(x=alleles_per_locus) ) +
+  geom_bar(color="black", fill="white",
+           width = 0.5) +
+  scale_x_continuous(breaks = c(1,2,3,4))
+
+perc_bi <- number_df %>% 
+  group_by(alleles_per_locus) %>% 
+  count() %>% 
+  mutate("percent_(%)" = round(n / nLoc(obj_origin) * 100,  digits = 2))%>% 
+  rename("alleles per locus" = alleles_per_locus,
+         occurences = n,
+         "occurences (%)" = "percent_(%)")
+
+
+knitr::kable(perc_bi, "html", digits = 2) %>% 
+        kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+<!-- ### Remove uninformative (monomorphic) loci -->
+```{r maf}
+maf <- 0 
+
+obj <- informloci(obj_origin, MAF = maf)
+```
+
+<!-- ### Filter out missing data -->
+```{r missing2, cache=F, fig.width=10, dpi=300}
+threshold_loci <- 0.1
+threshold_ind <- 0.1
+
+obj <- missingno(obj, type = "loci", cutoff = threshold_loci)
+
+obj <- missingno(obj, type = "genotypes", cutoff = threshold_ind)
+
+test <- seppop(obj) %>% 
+  lapply(propTyped, by="loc") %>% 
+  lapply(sort)
+
+# capture.output(
+# info_table(obj, type = "missing", plot = TRUE, plotlab = F),
+# file='NUL')
+```
+
+
+```{r maf2}
+maf <- 5 / nInd(obj)
+
+obj <- informloci(obj, MAF = maf)
+```
+
+
+### Data filtering thresholds
+```{r include=T}
+paste("SNP loci:", threshold_loci*100, 
+      "% missing data across populations", sep=" ")
+
+
+paste("Individuals:", threshold_ind*100, "% missing data", sep=" ")
+
+
+paste("SNP loci with minor allele frequency <", maf)
+```
+
+MAF corresponds to 5 samples (i.e. an allele has to be present in 5 or more individuals, or else it is discarded)
+
+### Data set details after data filtering:
+```{r include=T}
+
+paste(nInd(obj), "individuals", "and", nLoc(obj), "loci", sep=" ")
+```
+
+```{r, include=T, fig.asp=1}
+info <- t(
+  info_table(obj, type = "missing", plot = F, plotlab = F) )
+
+info <- as.data.frame(info[,-ncol(info)])
+
+info$locus <- rownames(info)
+
+info <- gather(info, key = pop, value = missing_data, -locus)
+
+mis <- info %>% 
+        ggplot(aes(x=locus, y=missing_data)) +
+        geom_bar(stat = "identity") +
+        geom_hline(yintercept = 0.10, colour = "red") +
+        theme(axis.text.x = element_text(colour = NA),
+              axis.ticks = element_line(colour = NA)) +
+        ggtitle("Missing data by cohort after filtering") +
+        facet_wrap(~pop, nrow=3 )
+
+mis
+```
+The filters applied, reduce the data set to loci with missing data < 10% overall. As shown above, loci within cohorts might exceed this limit.
+
+```{r}
+library(dartR)
+obj_light <- gi2gl(obj) # convert to genlight via dartR
+
+glPlot(obj_light, posi="topleft")
+```
+
+
+
+
+# Summary statistics
+```{r summary_statistics, cache=T}
+
+## functions
+
+###### basic statistics and their SEs
+table_out <- function(obj, variable, name){
+  
+means <- colMeans(variable, na.rm=T)
+out <- c(means, mean(variable, na.rm = T))
+
+out <- as.data.frame(out)
+Pops <- c(popNames(obj), "Total")
+rownames(out) <- Pops
+colnames(out) <- name
+
+sem_out <- apply(variable, 2, function(x) sd(x) / sqrt(length(x))) 
+  ## 2 means work along columns
+sem_out_mean <- sd(variable) / sqrt(length(variable))
+
+sem_out <- as.data.frame(c(sem_out, sem_out_mean))
+rownames(sem_out) <- Pops
+colnames(sem_out) <- paste("SE", name, sep = "_")
+
+table_out <- cbind(out, sem_out)
+
+return(table_out)
+}
+
+
+
+
+###### basic statistics reported from poppr and their SEs
+poppr2hierfstat_out <- function(obj, variable){
+  
+obj_list <- seppop(obj)
+  
+stats_poppr <- list()
+for(i in 1: length(obj_list)){
+  stats_poppr[[i]] <- locus_table(obj_list[[i]], information = F)
+}
+
+table_out <- list()
+for(i in 1:length(obj_list))
+table_out[[i]] <- stats_poppr[[i]][-nrow(stats_poppr[[1]]), variable]
+
+table_out <- as.matrix(as.data.frame(table_out))
+colnames(table_out) <- popNames(obj)
+
+return(table_out)
+}
+
+```
+
+```{r}
+## N
+N_by_locus <- basic.stats(obj)[["n.ind.samp"]]
+obj_list <- seppop(obj)
+N <- list()
+for(i in 1:length(obj_list)){
+        N[[i]] <- length(obj_list[[i]]@pop)
+}
+N <- melt(N)
+N <- c(N[,1], sum(N[,1]))
+
+## na
+na_by_locus <- poppr2hierfstat_out(obj, "allele")
+na <- table_out(obj, na_by_locus, "na")
+
+
+## uHe
+uHe_by_locus <- poppr2hierfstat_out(obj, "Hexp")
+uHe <- table_out(obj, uHe_by_locus, "uHe")
+
+## Ho
+Ho_by_locus <- basic.stats(obj)[["Ho"]]
+Ho <- table_out(obj, Ho_by_locus, "Ho")
+
+## ne
+ne_by_locus_Hs <- 1 / (1 - (basic.stats(obj)[["Hs"]]))
+ne_Hs <- table_out(obj, ne_by_locus_Hs, "ne")
+
+## ## ne
+## ne_by_locus_He <- 1 / (1 - (basic.stats(obj)[["Hs"]]))
+## ne_Hs <- table_out(obj, ne_by_locus, "ne")
+
+## Fis
+Fis_by_locus <- basic.stats(obj)[["Fis"]]
+Fis <- table_out(obj, Fis_by_locus, "Fis") ## better use boot.ppfis
+
+```
+
+```{r SummaryTable, cache=T, include=T}
+summary_df <- cbind(N, na[,1], ne_Hs[,1], Ho[,1], uHe[,1], Fis[,1])
+rownames(summary_df) <- c(popNames(obj), "Total")
+colnames(summary_df) <- c("N", "na", "ne", "Ho", "uHe", "Fis")
+summary_df <- round(as.data.frame(summary_df), digits = 3)
+
+knitr::kable(summary_df, "html", digits = 3) %>% 
+        kable_styling(bootstrap_options = "striped", full_width = F)
+
+## summary_df2 <- cbind(N, na, ne_Hs, Ho, uHe)
+## summary_df2
+```
+N: number of individuals  
+na: number of alleles per locus  
+ne: number of effective alleles  
+Ho: observed heterozygosity  
+uHe: unbiased expected heterozygosity - gene diversity [@nei_EstimationAverageHeterozygosity_1978]  
+Fis: inbreeding coefficient [@nei_MolecularEvolutionaryGenetics_1987]
+
+
+```{r}
+uHe <- uHe %>% 
+  mutate(upper = uHe + 1.96 * SE_uHe) %>% 
+  mutate(lower = uHe - 1.96 * SE_uHe) %>% 
+  add_column(population = c(popNames(obj), "Total") )
+```
+
+```{r fig.height=3, fig.width=5, include=T}
+uHe2 <- uHe[-nrow(uHe),] %>%
+  add_column(age = c("A","NR",
+                            "A","NR",
+                            "A","NR"))
+
+p <- ggplot(uHe2, aes(x=population, y=uHe, fill = age)) +
+  geom_bar(stat = "identity", 
+           color="black",
+           # fill = c("white", "lightgrey"),
+           width = .6) +
+  scale_y_continuous(breaks = seq(0, 0.3, 0.05)) +
+  # geom_errorbar(aes(ymin=lower, ymax=upper),
+  #               width = .3) +
+  ggtitle("uHe") +
+  theme_classic() +
+  scale_fill_manual(values=c("white", "lightgrey") ) +
+  theme(legend.position = "none")
+
+p 
+```
+
+```{r fig.height=3, fig.width=5, include=T}
+uHe_by_locus_tidy <- gather(as.data.frame(uHe_by_locus), 
+                            key = "population",
+                            value = "uHe")
+
+uHe_by_locus_tidy %>% 
+ggplot(aes(x = population, y = uHe) ) +
+  geom_violin() +
+  # geom_boxplot(width=.1) +
+  stat_summary(fun.y=mean, 
+                 geom="point") +
+  ggtitle("uHe distribution and mean value") +
+  theme_classic()
+
+```
+Distribution of uHe is not normal, so 95% CIs of previous graph are probably misleading
+
+```{r}
+Fis <- as.data.frame(Fis[-nrow(Fis), 1] )
+colnames(Fis) <- "Fis"
+boot.fis <- boot.ppfis(obj, nboot=1000)
+
+Fis <- bind_cols(Fis, boot.fis$fis.ci)
+
+Fis <- Fis %>% 
+  add_column(population = popNames(obj), .before = Fis$Fis )
+```
+
+```{r fig.height=3, fig.width=5, include=T}
+Fis %>% 
+ggplot(aes(x=population, y=Fis)) +
+  geom_point(stat = "identity", 
+           color="black", fill = "lightgrey",
+           size = 2) +
+  scale_y_continuous(breaks = seq(-0.5, 0.5, 0.02)) +
+  geom_errorbar(aes(ymin=ll, ymax=hl),
+                width = .3) +
+  ggtitle("Fis (95% CIs)") +
+  theme_classic()
+```
+
+```{r dpi=300, fig.width=5, fig.height=3, include=T}
+div <- summary(obj)
+
+all <- as.data.frame(div$pop.n.all)
+all <- all %>% 
+  mutate(population = rownames(all)) %>% 
+  rename(count = "div$pop.n.all")
+
+all$count <- as.integer(all$count)
+
+# str(all)
+
+ggplot(all, aes(x=population, y=count) ) +
+  geom_bar(stat = "identity", 
+           color = "black", fill = "white",
+           width = .8) +
+  geom_text(aes(label=count, vjust = 1.6)) +
+  ggtitle("Total Number of alleles per population")
+```
+
+```{r, include=F, fig.width=10}
+temp <- seppop(obj_light) 
+  myFreq <- lapply(temp, glMean)
+  
+  par(mfrow = c(3, 3)) 
+  
+  freq_plots <- lapply(myFreq, function(x){
+                       hist(x, proba=TRUE, col="gold", xlab="Allele frequencies",
+  main="Distribution of (second) allele frequencies" ) 
+    }
+  )
+  
+  dev.off()
+
+#   hist(myFreq[[1]], proba=TRUE, col="gold", xlab="Allele frequencies",
+#   main="Distribution of (second) allele frequencies")
+# hist(myFreq[[2]], proba=TRUE, col="gold", xlab="Allele frequencies",
+#   main="Distribution of (second) allele frequencies")
+# hist(myFreq[[3]], proba=TRUE, col="gold", xlab="Allele frequencies",
+#   main="Distribution of (second) allele frequencies")
+# hist(myFreq[[4]], proba=TRUE, col="gold", xlab="Allele frequencies",
+#   main="Distribution of (second) allele frequencies")
+# hist(myFreq[[5]], proba=TRUE, col="gold", xlab="Allele frequencies",
+#   main="Distribution of (second) allele frequencies")
+# hist(myFreq[[6]], proba=TRUE, col="gold", xlab="Allele frequencies",
+#   main="Distribution of (second) allele frequencies")
+```
+
+#### Distribution of allele frequencies
+```{r, include=T, fig.asp=1.5}
+temp <- seppop(obj_light) 
+  myFreq <- lapply(temp, glMean)
+  myFreq <- lapply(myFreq, function(x){
+    c(x, 1-x)
+  })
+              
+  
+  par(mfrow = c(3, 2)) 
+  
+  hist(myFreq[[1]], proba=TRUE, col="darkseagreen3", xlab="Allele frequencies",
+main="DE_A", nclass=20)
+  hist(myFreq[[2]], proba=TRUE, col="darkseagreen3", xlab="Allele frequencies",
+main="DE_NR", nclass=20)
+  hist(myFreq[[3]], proba=TRUE, col="darkseagreen3", xlab="Allele frequencies",
+main="GR_A", nclass=20)
+  hist(myFreq[[4]], proba=TRUE, col="darkseagreen3", xlab="Allele frequencies",
+main="GR_NR", nclass=20)
+  hist(myFreq[[5]], proba=TRUE, col="darkseagreen3", xlab="Allele frequencies",
+main="SI_A", nclass=20)
+  hist(myFreq[[6]], proba=TRUE, col="darkseagreen3", xlab="Allele frequencies",
+main="SI_NR", nclass=20)
+```
+
+### Private alleles per cohort - level Country/Pop
+```{r private_pops, cache=TRUE, dpi=300, fig.width=8.5, include=T}
+private <- poppr::private_alleles(obj, report = "data.frame")
+
+if(is.data.frame(private)){
+  
+ggplot(private) + geom_tile(aes(x = population,
+                                y = allele,
+                                fill = count)) +
+  ggtitle("Private alleles per population") +
+  scale_fill_viridis_c()
+  
+}
+```
+
+### Private alleles per cohort - level Country
+```{r include=T}
+setPop(obj) <- ~Country
+
+private <- poppr::private_alleles(obj, 
+                                  report = "data.frame")
+private
+if(is.data.frame(private)){
+
+ggplot(private) + geom_tile(aes(x = population,
+                                y = allele,
+                                fill = count)) +
+  ggtitle("Private alleles per cohort") +
+  scale_fill_viridis_c()
+  
+}
+
+setPop(obj) <- ~Country/Pop
+```
+
+```{r include=T}
+setPop(obj) <- ~Country
+
+PA <- rowSums(poppr::private_alleles(obj, count.alleles=F))
+if(is.numeric(PA)){
+  PA <- data.frame(PA)
+  PA <- rbind(PA, Total=colSums(PA))
+  
+  knitr::kable(PA, "html", digits = 3, 
+             caption="Private alleles per cohort") %>% 
+        kable_styling(bootstrap_options = "striped", full_width = F)
+  
+}else{
+  print("No private alleles detected")
+}
+
+
+                      
+
+setPop(obj) <- ~Country/Pop
+```
+
+
+### LD
+```{r}
+library(genetics)
+
+# Choose hierarchical level
+setPop(obj) <- ~Country
+
+loci_list <- seppop(obj) %>% 
+                lapply(genind2loci)
+
+LD_list <- lapply(loci_list, 
+                function(x)x[,-1] ) %>% 
+           lapply(makeGenotypes) %>% 
+           lapply(genetics::LD)
+```
+
+```{r, include=T}
+LD_list_df <- 
+        lapply(LD_list,
+               function(x)x$`P-value`)
+
+ind <- lapply(LD_list_df, function(x){
+        which(upper.tri(x, diag = TRUE), arr.ind = TRUE)
+})
+
+nn <- lapply(LD_list_df, function(x){
+        dimnames(x)
+})
+
+
+LD_list_df.long <- list()
+for(i in popNames(obj)){
+LD_list_df.long[[i]] <- na.omit(
+  data.frame(locus1 = nn[[i]][[1]] [ ind[[i]][, 1] ],
+           locus2 = nn[[i]][[2]] [ ind[[i]][, 2] ],
+           pvalue = LD_list_df[[i]] [ ind[[i]] ])
+        )
+}
+
+# test4 <- list()
+# for(i in popNames(obj)){
+#         test4[[i]] <- test3[[i]] %>%
+#   add_column(loci =
+#               as.factor(
+#                     paste(test3[[i]]$locus1,
+#                          test3[[i]]$locus2,
+#                          sep = "_")
+#                     ), .before = test3[[i]]$pvalue
+#   )
+# }
+# 
+# for(i in popNames(obj)){
+#         test4[[i]] <- test4[[i]] [,-(2:3)]
+# }
+
+# significant LD after multiple test correction
+for(i in popNames(obj)){
+LD_list_df.long[[i]]$p.adjust <- p.adjust(LD_list_df.long[[i]]$pvalue, 
+                              method = "holm")
+}
+
+LD_sig <- lapply(LD_list_df.long, filter,
+                    p.adjust < 0.05)
+
+LD_sig_intersect <- intersect(LD_sig$DE,
+                          LD_sig$GR,
+                          LD_sig$SI)
+LD_sig_intersect <- LD_sig_intersect[,1:2]
+LD_sig_intersect
+
+
+# check if sig LDs are on the same or on diff contigs
+LD_contig <- LD_sig_intersect
+
+LD_contig$locus1 <- str_replace_all(LD_sig_intersect$locus1,
+                    pattern = "-.+",
+                    replacement = "")
+
+LD_contig$locus2 <- str_replace(LD_sig_intersect$locus2,
+                    pattern = "-.+",
+                    replacement = "")
+
+invisible(
+LD_contig <- LD_contig %>% 
+  mutate(same.contig = locus1 == locus2)
+)
+
+paste(sum(LD_contig$same.contig), "pairs of loci on the same contig")
+
+
+
+LD_sig_df <- melt(
+  lapply(LD_sig, nrow)
+)
+
+LD_sig_df <- LD_sig_df %>% 
+        rename(population = L1,
+               "N of pairs of loci with significant LD" = value)
+LD_sig_df
+```
+
+```{r}
+# setwd("../results")
+
+for(i in 1:length(LD_list_df.long))
+write.csv(LD_list_df.long[[i]], 
+          file = paste("../results/", popNames(obj)[i],
+                       "_LD.csv", sep = ""))
+
+# reset pop structure
+setPop(obj) <- ~Country/Pop
+```
+
+LD between all pairs of loci was tested seperately for all three cohorts (DE, GR, SI). 
+
+The Holm-Bonferroni method was employed to account for multiple testing.
+
+Significant LD was detected on 234 loci for the German cohort, 143 loci for the Greek cohort, and 167 loci for the Slovenian cohort.
+
+36 pairs of SNPs, exhibited significant LD across all cohorts.
+
+### Hardy - Weinberg equilibrium
+```{r HWE, fig.width=9, fig.height=20,include=T}
+hw.obj <- seppop(obj, drop=T) %>% 
+  lapply(hw.test, B = 0)
+## seppop: calculates p-value for each locus of every pop
+## B: number of permutations
+
+# Re-Write HWE p.adjust
+hw.obj.df <- hw.obj %>% 
+  lapply(as.data.frame)
+
+# Use p-values from chi-square (col 3) or exact test (col 4)
+p.adjust.HWE <- function(x){
+  mutate(x, p_adj = p.adjust(x[,3], method = "holm") )
+}
+
+hw.obj.df <- lapply(hw.obj.df, p.adjust.HWE)
+
+for(i in 1:length(hw.obj)){
+rownames(hw.obj.df[[i]]) <- rownames(hw.obj[[i]])
+}
+
+## Isolate adjusted p-values either from chi2 test (j=4) or 
+## from exact test (j=5)
+hw.mat.adj <- sapply(hw.obj.df, "[", i = TRUE, j = 4)
+rownames(hw.mat.adj) <- rownames(hw.obj.df[[1]])
+
+levelplot(t(hw.mat.adj), aspect = "fill", 
+          xlab="Pop", ylab="Marker", 
+  main = "HWE chi-square p-values after Holm-Bonferroni correction")
+
+# kable(hw.obj.df[[1]], "html",
+# caption = "HWE exact test p-values after Holm-Bonferroni
+# correction (1000 permutations)") %>%
+#  kable_styling(bootstrap_options = "striped", full_width = F)
+
+# setwd("../results")
+
+for(i in 1:length(hw.obj.df))
+write.csv(hw.obj.df[[i]], file = paste("../results/", popNames(obj)[i], 
+                                       "_HWE.csv", sep = ""))
+```
+
+```{r eval=F}
+typeof(hw.mat)
+hw.mat
+```
+
+# Genetic Differentiation
+```{r matrix_fun}
+## Get lower triangle of the matrix 
+  get_lower_tri<-function(matrix){
+    matrix[upper.tri(matrix, diag = T)] <- NA
+    matrix <- matrix[-1, -ncol(matrix)]
+    return(matrix)
+  }
+```
+
+### F~ST~ (G~ST~) [@nei_MolecularEvolutionaryGenetics_1987]
+```{r Fst_table, cache=T, include=T}
+library(hierfstat)
+pair_fst <- genet.dist(obj, method = "Nei87")
+pair_fst <- as.data.frame(as.matrix(pair_fst))
+  
+## print table with knitr  
+pair_fst <- get_lower_tri(pair_fst)  
+options(knitr.kable.NA = '')  
+
+
+knitr::kable(pair_fst, "html", digits = 4) %>% 
+        kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+```{r Fst_table2, cache=T, include=T}
+# library(hierfstat)
+setPop(obj) <- ~Country
+pair_fst <- genet.dist(obj, method = "Nei87")
+pair_fst <- as.data.frame(as.matrix(pair_fst))
+  
+## print table with knitr  
+pair_fst <- get_lower_tri(pair_fst)  
+options(knitr.kable.NA = '')  
+
+
+knitr::kable(pair_fst, "html", digits = 4) %>% 
+        kable_styling(bootstrap_options = "striped", full_width = F)
+
+# reset hierarchy
+setPop(obj) <- ~Country/Pop
+```
+
+### Nm based on F~ST~ (G~ST~) [@nei_MolecularEvolutionaryGenetics_1987]
+#### ATTN: Results differ from GenAlEx, as this calculates Nm based on the original F~ST~
+```{r include=T}
+x <- basic.stats(obj)
+Nm <- ( (1 / x[["perloc"]][["Fst"]]) - 1) / 4
+
+Nm_mean <- mean(Nm)
+
+Nm_se <- sd(Nm) / sqrt(length(Nm))
+
+Nm_df <- data.frame(
+        Nm = round (Nm_mean, digits=2),
+        se = round( Nm_se, digits = 2)
+)
+
+knitr::kable(Nm_df, "html", digits = 4) %>% 
+        kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+```{r}
+# check this from strataG package
+# Nm_strG <- fstToNm(fst, 2)
+```
+
+### Cavalli-Sforza and Edwards Chord distance [@cavallisforza_PhylogeneticAnalysisModels_1967]
+```{r cavalli-sforza_1, fig.width = 10, dpi=300, cache=T, include=T}
+## https://groups.google.com/forum/##!topic/poppr/vEQ8vb2oObQ
+
+## create hierfstat input file
+obj_hier <- genind2hierfstat(obj)
+
+## create cav-sf distance table
+cav_sf <- genet.dist(obj_hier, method = "Dch")
+cav_sf <- as.matrix(cav_sf)
+pop_vector <- popNames(obj)
+colnames(cav_sf) <- pop_vector
+rownames(cav_sf) <- pop_vector
+
+## print table with knitr  
+cav_sf <- get_lower_tri(cav_sf)  
+options(knitr.kable.NA = '')  
+knitr::kable(cav_sf, "html", digits = 4,
+  caption = "Cavalli-Sforza and Edwards Chord distance between populations") %>% 
+  
+kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+```{r cavalli-sforza_2, fig.width = 10, dpi=300, cache=T}
+# functions
+fungen <- function(pop_column) {
+  force(pop_column)
+  function(x) {
+    dat <- cbind(pop_column, x)
+    res <- nj(genet.dist(dat, method = "Dch"))
+    res$tip.label <- levels(dat[[1]])
+    res
+  }
+}
+
+genet.tree.nj <- fungen(obj_hier[1])
+
+fungen <- function(pop_column) {
+  force(pop_column)
+  function(x) {
+    dat <- cbind(pop_column, x)
+    res <- upgma(genet.dist(dat, method = "Dch"))
+    res$tip.label <- levels(dat[[1]])
+    res
+  }
+}
+
+genet.tree.upgma <- fungen(obj_hier[1])
+```
+
+
+```{r fig.width = 10, dpi=300, cache=T}
+# Create tree
+tree_upgma <- genet.tree.upgma(obj_hier[-1])
+num_boot <- 1000
+tree_upgma$node.label <- boot.phylo(phy = tree_upgma, x = obj_hier[-1],
+                                    FUN = genet.tree.upgma, B = num_boot
+                                    , jumble = FALSE
+                                    , mc.cores = 4  # does not work on Windows
+                                    )
+```
+
+```{r fig.width = 10, dpi=300, cache=T, include=T}
+# Display tree
+nodelabs <- (100 / num_boot) *  tree_upgma$node.label
+nodelabs[nodelabs < 50] <- NA
+plot.phylo(tree_upgma, cex = 1, font = 2, adj = 0, xpd = TRUE,
+           label.offset = 0.0001)
+nodelabels(nodelabs, adj = c(1.3, -0.5), frame = "n", cex = 0.8,
+           font = 3, xpd = TRUE)
+title(main = "Dendrogram based on Cavalli-Sforza and Edwards Chord distance",
+      sub = "method: UPGMA, 1000 Bootstraps")
+axisPhylo(side = 1)
+```
+
+```{r fig.width = 10, dpi=300, cache=T, eval=F}
+# Create tree
+tree_nj <- genet.tree.nj(obj_hier[-1])
+num_boot <- 100 # number of bootstraps
+tree_nj$node.label <- boot.phylo(phy = tree_nj, x = obj_hier[-1], 
+                                 FUN = genet.tree.nj, B = num_boot
+                                 , jumble = FALSE
+                                 , mc.cores = 4  # does not work on Windows
+)
+```
+
+```{r fig.width = 10, dpi=300, cache=T, eval=F}
+# Display tree
+nodelabs <- (100 / num_boot) *  tree_nj$node.label
+nodelabs[nodelabs < 50] <- NA # hide values below 50
+plot.phylo(tree_nj, cex = 1, font = 2, adj = 0, xpd = TRUE, 
+           label.offset = 0.0001, type = "phylogram")
+nodelabels(nodelabs, adj = c(1.3, -0.5), frame = "n", cex = 0.8, 
+           font = 3, xpd = TRUE)
+title(main = "Dendrogram based on Cavalli-Sforza and Edwards Chord distance",
+      sub = "method: Neighbor-Joining, 1000 Bootstraps")
+add.scale.bar(lwd = 2, length = 0.005, x = 0.01, y=1)
+# to find optimal position for scale bar write on the console:
+# locator(1)
+# and click on the plot where you want to place the scale bar
+```
+
+### Nei distance [@nei_EstimationAverageHeterozygosity_1978]
+```{r nei_hierfstat, cache=T, include=T}
+## create nei distance table
+nei <- genet.dist(obj, method = "Ds")
+nei <- as.matrix(nei)
+pop_vector <- popNames(obj)
+colnames(nei) <- pop_vector
+rownames(nei) <- pop_vector
+
+
+## print table with knitr  
+nei <- get_lower_tri(nei)
+options(knitr.kable.NA = '')  
+kable(nei, "html", digits = 4,
+      caption = "Nei's Standard genetic distance between populations") %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+```{r nei_poppr, fig.width = 10, dpi=300, cache=T}
+set.seed(1994)
+
+
+tree_upgma <- aboot(obj, strata = ~Country/Pop, sample = 1000, 
+                    cutoff = 50, distance = "nei.dist", 
+                    tree = "upgma",showtree = F)
+```
+
+```{r fig.width = 10, dpi=300, cache=T, include=T}
+nodelabs <- round(tree_upgma$node.label, 2)
+plot.phylo(tree_upgma, cex = 1, font = 2, adj = 0, xpd = TRUE, 
+label.offset = 0.0001,
+# tip.color = c(rep("blue", 2), rep("red", 2), rep("green", 2)) 
+)
+nodelabels(nodelabs, adj = c(1.3, -0.5), frame = "n", cex = 0.8, 
+font = 3, xpd = TRUE)
+title(main = "Dendrogram based on Nei's standard genetic distance",
+      sub = "method: UPGMA, 1000 Bootstraps")
+axisPhylo(side = 1)
+```
+
+```{r fig.width = 10, dpi=300, cache=T, eval=F}
+tree_nj <- aboot(obj, strata = ~Country/Pop, sample = 1000, cutoff = 50,
+                 distance = "nei.dist", tree = "nj", showtree = F)
+```
+
+```{r fig.width = 10, dpi=300, cache=T, eval=F}
+nodelabs <- round(tree_nj$node.label, 2)
+plot.phylo(tree_nj, cex = 1, font = 2, adj = 0, xpd = TRUE, 
+label.offset = 0.0001)
+nodelabels(nodelabs, adj = c(1.3, -0.5), frame = "n", cex = 0.8, 
+font = 3, xpd = TRUE)
+title(main = "Dendrogram based on Nei's standard genetic distance",
+      sub = "method: Neighbor-Joining, 1000 Bootstraps")
+add.scale.bar(lwd = 2, length = 0.01, x = 0.01, y=1)
+```
+
+### Principal Component Analysis (PCA)
+```{r pca, dpi=96, cache=T, fig.width=5, fig.height=3, include=T}
+## In case there are missing data, replace with mean
+X <- tab(obj, freq = TRUE, NA.method = "mean") 
+
+pca.obj <- dudi.pca(X, scale = FALSE, scannf = FALSE, nf = 3)
+
+fviz_eig(pca.obj, main = "Scree plot of PCA")
+```
+
+```{r pca_plots, fig.width=10, dpi=300, cache=T, include=T}
+ggord(pca.obj, pop(obj), arrow = NULL, txt = NULL, 
+      grp_title="Populations", ellipse=T, poly=FALSE, size=2, 
+      alpha=.8, coord_fix=F, axes = c("1", "2")) +
+  geom_hline(yintercept=0,linetype=2) + 
+  geom_vline(xintercept=0,linetype=2) +
+  ggtitle("Principal Component Analysis") +
+  scale_shape_manual('Groups', values = 0:5) +
+  scale_color_manual('Groups', values = 
+                       c('#1b9e77','#d95f02','#7570b3',
+                         '#e7298a','#66a61e','#e6ab02') )
+
+# ggord(pca.obj, pop(obj), arrow = NULL, txt = NULL, 
+# grp_title="Populations", ellipse=T, poly=FALSE, size=2, 
+# alpha=.8, coord_fix=F, axes = c("1", "3")) +
+#   geom_hline(yintercept=0,linetype=2) + 
+#   geom_vline(xintercept=0,linetype=2) +
+#   ggtitle("Principal Component Analysis") +
+#   scale_shape_manual('Groups', values = 0:5) +
+#   scale_color_manual('Groups', values = 
+#                        c('#1b9e77','#d95f02','#7570b3',
+#                          '#e7298a','#66a61e','#e6ab02') )
+```
+
+```{r ade4_plot, eval=FALSE, fig.width=10, cache=T, dpi=300, include=FALSE}
+col <- funky(15)
+
+s.class(pca.obj$li, pop(obj), xax=1, yax=2,
+        col=transp(col,.6))
+title("PCA \naxes 1-2")
+add.scatter.eig(pca.obj$eig[1:20], nf=3,xax=1,yax=2)
+```
+
+### Correspondence Analysis
+```{r ca, dpi=96, cache=T, fig.width=5, fig.height=3, include=T}
+ca1 <- dudi.coa(tab(obj, freq = TRUE, NA.method = "mean"), scannf=FALSE,nf=3) 
+
+fviz_eig(ca1, main = "Scree plot of CA")
+```
+
+```{r ca_plots, fig.width=10, dpi=300, cache=T, include=T}
+# devtools::install_github('fawda123/ggord')
+
+ggord(ca1, pop(obj), arrow = NULL, txt = NULL, 
+      grp_title="Populations", ellipse=T, poly=FALSE, 
+      size=2, alpha=.8, coord_fix=F, axes = c("1", "2")) +
+  geom_hline(yintercept=0,linetype=2) + 
+  geom_vline(xintercept=0,linetype=2) +
+  ggtitle("Correspondence Analysis")  +
+  scale_shape_manual('Groups', values = 0:5) +
+  scale_color_manual('Groups', values = 
+                       c('#1b9e77','#d95f02','#7570b3',
+                         '#e7298a','#66a61e','#e6ab02') )
+
+# ggord(ca1, pop(obj), arrow = NULL, txt = NULL, 
+# grp_title="Populations", ellipse=T, poly=FALSE, 
+# size=2, alpha=.8, coord_fix=F, axes = c("1", "3")) +
+#   geom_hline(yintercept=0,linetype=2) + 
+#   geom_vline(xintercept=0,linetype=2) +
+#   ggtitle("Correspondence Analysis")
+#   #scale_colour_brewer(palette="Set3")
+
+# loadingplot(ca1$c1^2, threshold = 8)
+```
+
+### AMOVA
+```{r amova, cache=T, include=T}
+# setPop(obj) <- ~Country
+
+poppr.amova(obj, ~Country, within = F)
+```
+
+### Hierarchical AMOVA
+```{r amova_within, cache=T, include=T}
+# setPop(obj) <- ~Country/Pop
+
+poppr.amova(obj, ~Country/Pop, within = F)
+```
+
+### Hierarchical AMOVA - within variation included (as calculated using Arlequin)
+```{r amova_arlequin, cache=T, include=T}
+### Hierarchical AMOVA - within variation included (as calculated using Arlequin)
+poppr.amova(obj, ~Country/Pop, within = T)
+```
+
+### IBD
+```{r ibd, fig.height=5, fig.width=5, cache=T, dpi=300, include=T}
+
+#change hierarchy to country level
+setPop(obj) <- ~Country
+
+# obj_pop <- genind2genpop(obj)
+# Dgen <- dist.genpop(obj_pop,method=2) #maybe only with genepop object
+
+# compute cavalli-sforza distance
+Dgen <- genet.dist(obj, method = "Dch")
+# theoretically any genetic distance can be used
+# Dgeo <- dist(obj_pop$other$xy)
+geo <- data.frame(popNames(obj))
+x <- c(47.81, 40.09, 46.09)
+y <- c(12.87, 22.44, 14.29)
+geo$x <- x
+geo$y <- y
+Dgeo <- dist(geo)
+
+ibd <- mantel.randtest(Dgen,Dgeo) 
+ibd
+
+# plot(ibd)
+
+# library(MASS)
+# dens <- kde2d(Dgeo,Dgen, n=300)
+# myPal <- colorRampPalette(c("white","blue","gold", "orange", "red"))
+# plot(Dgeo, Dgen, pch=20,cex=.5,
+#      ylab="Cavalli-Sforza genetic distance",
+#      xlab="Geographical distance (euclidean)")
+# image(dens, col=transp(myPal(300),.7), add=TRUE)
+# abline(lm(Dgen~Dgeo))
+# title("Isolation by distance")
+
+plot(Dgeo, Dgen, pch=20,cex=.5,
+     ylab="Cavalli-Sforza genetic distance",
+     xlab="Geographical distance (euclidean)")
+abline(lm(Dgen~Dgeo))
+title("Isolation by distance")
+
+#reset hierarchy
+setPop(obj) <- ~Country/Pop
+```
+
+```{r eval=f}
+library(ecodist)
+
+mantel(Dgen ~ Dgeo)
+```
+
+
+<!-- ### Structure -->
+
+<!-- #### 1000 Burn-in iterations, 5000 MCMC repititions -->
+<!-- #### ATTN! A lower than optimal number of repititions was used, due to computational constrains. -->
+<!-- #### Repeating the analysis using a higher number of repitions is required to ensure its robustness. -->
+```{r, eval=F}
+#change hierarchy
+setPop(obj) <- ~Country/Pop
+```
+
+```{r structure_runs, eval=FALSE, cache=T, eval=F}
+
+## Convert input file
+        loci <- genind2loci(obj)
+        
+        ## obj_g <- genind2gtypes(obj)
+        obj_g <- loci2gtypes(loci)
+
+struct <- structureRun(obj_g, k = 2:6, num.k.rep = 5,
+                            burnin = 1000, numreps = 5000, noadmix = F,
+                            freqscorr = T, 
+                            ## pop.prior = , 
+                            ## locpriorinit = , maxlocprior = , ## locprior
+                            ## gensback = , migrprior = , ## usepopinfo
+                            ## pfrompopflagonly = , popflag = , ## usepopinfo
+                            ## pops = c(""),
+                            delete.files = F)
+
+## ## Evanno deltaK
+## evanno(gano.struct)
+## 
+## ## clumpp
+## gano.clumpp <- clumpp(gano.struct, k=5, 
+##                       delete.files = F)
+## 
+## ## show membership using strataG
+## sp <- structurePlot(gano.clumpp, horiz = FALSE)
+
+
+
+```
+
+<!-- #### Tests for optimal K -->
+```{r evanno, cache=T, eval=F}
+## read structure runs from pophelper
+sfiles <- list.files(path = "../results/gtypes.created.on.2019.04.27.21.33.22.structureRun/",
+                     pattern = "out_f", full.names = T, recursive = T)
+
+        ## include individual names from STRUCTURE file as row names
+slist <- readQ(files=sfiles, indlabfromfile=T)
+
+## Evanno pophelper
+sr1 <- summariseQ(tabulateQ(slist))
+p <- evannoMethodStructure(data=sr1,exportplot=F,returnplot=T,
+                           returndata=F,basesize=12,linesize=0.7)
+```
+
+```{r evanno2, cache=T, dpi=300, fig.width=10, eval=F} 
+grid.arrange(p)
+```
+
+
+```{r barplots-structure, dpi=300, cache=T, fig.width=10, eval=F}
+## clumpp through pophelper
+## clumppExport(qlist=slist[16:20], useexe=T)
+
+## show membership using pophelper
+## read aligned file
+## aligned <- readQ("./pop_K5/pop_K5-combined-aligned.txt")
+
+## plot
+## copy & paste the population column from genalex input file to a csv
+# pop_labs <- read.delim("Castanea_SSR_HRM_pops.csv", 
+#                        header=F,stringsAsFactors=F)
+
+loci <- genind2loci(obj)
+
+pop_labs <- data.frame(loci[,1], stringsAsFactors = F)
+names(pop_labs) <- "Pop" 
+pop_labs$Pop <- as.character(pop_labs$Pop)
+
+## FOR MORE COLOR COMBINATIONS CHECK:
+## http://colorbrewer2.org/##type=diverging&scheme=BrBG&n=4
+clist <- list(
+        "shiny"=c("#1D72F5","#DF0101","#77CE61", "#FF9326","#A945FF","#0089B2","#FDF060","#FFA6B2","#BFF217","#60D5FD","#CC1577","#F2B950","#7FB21D","#EC496F","#326397","#B26314","#027368","#A4A4A4","#610B5E"),
+        "strong"=c("#11A4C8","#63C2C5","#1D4F9F","#0C516D","#2A2771","#396D35","#80C342","#725DA8","#B62025","#ED2224","#ED1943","#ED3995","#7E277C","#F7EC16","#F8941E","#8C2A1C","#808080"),
+        "oceanfive"=c("#00A0B0", "#6A4A3C", "#CC333F", "#EB6841", "#EDC951"),
+        "keeled"=c("#48B098", "#91CB62", "#FFEE3B", "#FB9013", "#FF3C28"),
+        "vintage"=c("#400F13", "#027368", "#A3BF3F", "#F2B950", "#D93A2B"),
+        "muted"=c("#46BDDD","#82DDCE","#F5F06A","#F5CC6A","#F57E6A"),
+        "teal"=c("#CFF09E","#A8DBA8","#79BD9A","#3B8686","#0B486B"),
+        "merry"=c("#5BC0EB","#FDE74C","#9BC53D","#E55934","#FA7921"),
+        "funky"=c("#A6CEE3", "#3F8EAA", "#79C360", "#E52829", "#FDB762","#ED8F47","#9471B4"),
+        "retro"=c("#01948E","#A9C4E2","#E23560","#01A7B3","#FDA963","#323665","#EC687D"),
+        "cb_paired"=c("#A6CEE3","#1F78B4","#B2DF8A","#33A02C","#FB9A99","#E31A1C","#FDBF6F","#FF7F00","#CAB2D6","#6A3D9A","#FFFF99","#B15928"),
+        "cb_set3"=c("#8DD3C7","#FFFFB3","#BEBADA","#FB8072","#80B1D3","#FDB462","#B3DE69","#FCCDE5","#D9D9D9","#BC80BD","#CCEBC5","#FFED6F"),
+        "morris"=c("#4D94CC","#34648A","#8B658A","#9ACD32","#CC95CC","#9ACD32","#8B3A39","#CD6601","#CC5C5B","#8A4500"),
+        "wong"=c("#000000","#E69F00","#56B4E9","#009E73","#F0E442","#006699","#D55E00","#CC79A7"),
+        "krzywinski"=c("#006E82","#8214A0","#005AC8","#00A0FA","#FA78FA","#14D2DC","#AA0A3C","#FA7850","#0AB45A","#F0F032","#A0FA82","#FAE6BE"))
+
+p2 <- plotQ(slist[1],returnplot=T,exportplot=F,quiet=T,basesize=11,
+            # showindlab=T, useindlab=T, 
+            ## indlabwithgrplab=T,
+            showsp = T, splab = "K=2", splabsize = 11,
+            showyaxis=T, 
+            # showticks=T, ticksize=0.3, ticklength=0.2 ## y axis
+            ,panelspacer=0.4,
+            grplab = pop_labs,
+            grplabsize=4, linesize=0.8, pointsize=4,
+            ## sortind="all",
+            divgrp = "Pop", divsize=0.5,
+            clustercol=clist$wong,
+            panelratio=c(11,1))
+
+## grid.arrange(p2$plot[[1]])
+
+p3 <- plotQ(slist[6],returnplot=T,exportplot=F,quiet=T,basesize=11,
+            # showindlab=T, useindlab=T, 
+            ## indlabwithgrplab=T,
+            showsp = T, splab = "K=3", splabsize = 11,
+            showyaxis=T, 
+            # showticks=T, ticksize=0.3, ticklength=0.2 ## y axis
+            ,panelspacer=0.4,
+            grplab = pop_labs,
+            grplabsize=4, linesize=0.8, pointsize=4,
+            ## sortind="all",
+            divgrp = "Pop", divsize=0.5,
+            clustercol=clist$wong,
+            panelratio=c(11,1))
+
+## grid.arrange(p3$plot[[1]])
+```
+
+```{r barplots-structure2, cache=T, eval=F}
+## A new chunk was created for plotting to avoid producing an empty plot
+## https://support.rstudio.com/hc/en-us/community/posts/239529128-Notebooks-grid-newpage
+grid.arrange(p2$plot[[1]])
+grid.arrange(p3$plot[[1]])
+```
+
+```{r, eval=F}
+#reset hierarchy
+setPop(obj) <- ~Country/Pop
+```
+
+
+# Effective Population Size (Ne) estimation
+Estimate Ne from linkage disequilibrium based on Pearson correlation approximation following [@waples_EstimatingContemporaryEffective_2016].
+
+<!-- # ATTN! Check if some loci should be removed in case of LD -->
+
+## Effective Population Size (Ne)
+```{r}
+## Convert input file
+        loci <- genind2loci(obj)
+        
+        ## obj_g <- genind2gtypes(obj)
+        obj_g <- loci2gtypes(loci)
+```        
+
+```{r}
+source("ldNe.R")
+```
+
+```{r}
+library(parallel)
+
+Ne_0 <- ldNe(obj_g, maf.threshold = 0.01, by.strata = F, ci = 0.95)
+Ne_0 <- as.data.frame(Ne_0)
+
+Ne_0 <- add_column(Ne_0, population = popNames(obj), .before = "S")
+Ne_0
+```
+
+```{r}
+Ne_0.05 <- ldNe(obj_g, maf.threshold = 0.05, by.strata = F, ci = 0.95)
+Ne_0.05 <- as.data.frame(Ne_0.05)
+
+Ne_0.05 <- add_column(Ne_0.05, population = popNames(obj), .before = "S")
+Ne_0.05
+```
+
+```{r, include=T}
+knitr::kable(Ne_0, format = "html", digits = 3,
+             caption = "Effective Population Size - Maf=0.01") %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F)
+
+knitr::kable(Ne_0.05, format = "html", digits = 3,
+             caption = "Effective Population Size - Maf=0.05") %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F)
+
+ggplot(Ne_0, aes(x=population, y=Ne)) +
+  geom_point(stat = "identity",
+           color="black", fill = "lightgrey",
+           size = 2) +
+  # scale_y_continuous(breaks = seq(0, 10000, 500)) +
+  geom_errorbar(aes(ymin=param.lci, ymax=param.uci),
+                width = .3) +
+  ggtitle("Effective Population Size per Cohort (95% CIs, Maf=0.01)") +
+  theme_classic()
+
+ggplot(Ne_0.05, aes(x=population, y=Ne)) +
+  geom_point(stat = "identity",
+           color="black", fill = "lightgrey",
+           size = 2) +
+  # scale_y_continuous(breaks = seq(0, 10000, 500)) +
+  geom_errorbar(aes(ymin=param.lci, ymax=param.uci),
+                width = .3) +
+  ggtitle("Effective Population Size per Cohort (95% CIs, Maf=0.05)") +
+  theme_classic()
+```
+
+## Effective Population Size (Ne) estimation after removal of SNPs in LD
+```{r}
+to.remove <- as.vector(LD_sig_intersect$locus1)
+
+loci_int <- names(nAll(obj))
+
+obj_no_LD <- obj[,loc = setdiff(loci_int, to.remove)]
+```
+
+```{r}
+# Convert input file
+        loci_no_LD <- genind2loci(obj_no_LD)
+        
+        ## obj_g <- genind2gtypes(obj)
+        obj_g_no_LD <- loci2gtypes(loci_no_LD)
+```
+
+```{r}
+Ne_0_no_LD <- ldNe(obj_g_no_LD, maf.threshold = 0.01, by.strata = F, ci = 0.95)
+Ne_0_no_LD <- as.data.frame(Ne_0_no_LD)
+
+Ne_0_no_LD <- add_column(Ne_0_no_LD, population = popNames(obj), .before = "S")
+Ne_0_no_LD
+```
+
+```{r}
+Ne_0.05_no_LD <- ldNe(obj_g_no_LD, maf.threshold = 0.05, by.strata = F, ci = 0.95)
+Ne_0.05_no_LD <- as.data.frame(Ne_0.05_no_LD)
+
+Ne_0.05_no_LD <- add_column(Ne_0.05_no_LD, population = popNames(obj), .before = "S")
+Ne_0.05_no_LD
+```
+
+```{r, include=T}
+knitr::kable(Ne_0_no_LD, format = "html", digits = 3,
+             caption = "Effective Population Size - Maf=0.01") %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F)
+
+knitr::kable(Ne_0.05_no_LD, format = "html", digits = 3,
+             caption = "Effective Population Size - Maf=0.05") %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F)
+
+ggplot(Ne_0_no_LD, aes(x=population, y=Ne)) +
+  geom_point(stat = "identity",
+           color="black", fill = "lightgrey",
+           size = 2) +
+  # scale_y_continuous(breaks = seq(0, 10000, 500)) +
+  geom_errorbar(aes(ymin=param.lci, ymax=param.uci),
+                width = .3) +
+  ggtitle("Effective Population Size per Cohort (95% CIs, Maf=0.01)") +
+  theme_classic()
+
+ggplot(Ne_0.05_no_LD, aes(x=population, y=Ne)) +
+  geom_point(stat = "identity",
+           color="black", fill = "lightgrey",
+           size = 2) +
+  # scale_y_continuous(breaks = seq(0, 10000, 500)) +
+  geom_errorbar(aes(ymin=param.lci, ymax=param.uci),
+                width = .3) +
+  ggtitle("Effective Population Size per Cohort (95% CIs, Maf=0.05)") +
+  theme_classic()
+```
+
+
+# Reproducibility
+```{r reproducibility, include=T}
+devtools::session_info()
+```
+
+# Bibliography

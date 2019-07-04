@@ -1,0 +1,51 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+source("import_snp.R")
+```
+
+```{r}
+obj <- import.snp.fagus(0.1, 0.1, 0.00775193798449612)
+```
+
+```{r}
+# set hierarchy
+setPop(obj) <- ~Country
+```
+
+```{r}
+# convert back to loci format
+obj_loci <- genind2loci(obj)
+
+# Split alleles 
+library(splitstackshape)
+
+vec <- colnames(obj_loci[-1])
+
+df <- cSplit(indt = obj_loci, splitCols = vec,
+                sep = "/", 
+# needed so that it does not convert "T" to logical ("TRUE")
+               type.convert = F) 
+
+# add genotype col
+df <- add_column(df, rownames(obj_loci), .before = "population")
+
+colnames(df) <- c("Genotype", "Population", 
+                  rep(colnames(obj_loci[-1]), each = 2) )
+
+# replace NAs with 0
+df[is.na(df)] <- 0
+
+# recode nucleotide bases to numbers
+df[df=="A"] <- 1
+df[df=="T"] <- 2
+df[df=="G"] <- 3
+df[df=="C"] <- 4
+
+head(df)
+
+write.csv(df, file="../data/LGM_SNP_Fagus.csv", row.names = F)
+```
