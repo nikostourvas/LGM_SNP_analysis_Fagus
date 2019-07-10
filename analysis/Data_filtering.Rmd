@@ -1,0 +1,565 @@
+---
+title: "LifeGenMon Fagus SNP analysis - Data filtering options"
+author: "Nikos Tourvas"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+bibliography: library.bib
+output:
+  html_notebook:
+    code_folding: hide
+    theme: united
+    toc: yes
+    toc_float: yes
+    toc_depth: 3
+  html_document:
+    code_folding: hide
+    theme: united
+    toc: yes
+    ## toc_float: yes
+  pdf_document:
+    toc: yes
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include = FALSE)
+```
+
+```{r}
+source("import_snp.R")
+source("barplot_missing.R")
+source("barplot_N_alleles.R")
+```
+
+
+# Case 1
+
+```{r}
+threshold_loci <- 0.1
+threshold_ind <- 0.1
+maf <- 0.05
+
+obj <- import.snp.fagus(threshold_loci = threshold_loci,
+                        threshold_ind = threshold_ind,
+                        maf = maf)
+```
+
+### Data filtering thresholds
+```{r include=T}
+paste("SNP loci:", threshold_loci*100, 
+      "% missing data across populations", sep=" ")
+yintercept = 20
+
+paste("Individuals:", threshold_ind*100, "% missing data", sep=" ")
+
+
+paste("SNP loci with minor allele frequency <", maf)
+```
+
+```{r include=T}
+### Data set details after data filtering:
+
+paste(nInd(obj), "individuals", "and", nLoc(obj), "loci", sep=" ")
+```
+
+```{r, include=T}
+barplot.missing(obj)
+```
+
+```{r cache=T, dpi=300, fig.width=5, fig.height=3, include=T}
+a1 <- barplot.N.alleles(obj)
+a1$plot
+```
+
+### Private alleles per cohort - level Country/Pop
+```{r, include=T}
+priv <- poppr::private_alleles(obj, report = "data.frame")
+
+if(is.data.frame(priv)){
+  
+ggplot(priv) + geom_tile(aes(x = population,
+                                y = allele,
+                                fill = count)) +
+  ggtitle("Private alleles per population") +
+  scale_fill_viridis_c()
+  
+}
+```
+### Private alleles per cohort - level Country
+```{r, include=T}
+setPop(obj) <- ~Country
+
+priv <- poppr::private_alleles(obj, 
+                                  report = "data.frame")
+
+
+if(is.data.frame(priv)){
+
+ggplot(priv) + geom_tile(aes(x = population,
+                                y = allele,
+                                fill = count)) +
+  ggtitle("Private alleles per cohort") +
+  scale_fill_viridis_c()
+  
+}
+
+setPop(obj) <- ~Country/Pop
+```
+
+```{r}
+setPop(obj) <- ~Country
+
+priv_count1 <- poppr::private_alleles(obj, 
+                                  report = "data.frame",
+                                  count.alleles = F)
+priv_count1$maf <- maf
+
+# ggplot(priv_count, aes(x=population, y=count)) +
+#   geom_bar(stat="identity")
+
+setPop(obj) <- ~Country/Pop
+```
+
+
+# Case 2 - No MAF filter
+
+```{r}
+threshold_loci <- 0.1
+threshold_ind <- 0.1
+maf <- 0.03
+
+obj <- import.snp.fagus(threshold_loci = threshold_loci,
+                        threshold_ind = threshold_ind,
+                        maf = maf)
+```
+
+### Data filtering thresholds
+```{r include=T}
+paste("SNP loci:", threshold_loci*100, 
+      "% missing data across populations", sep=" ")
+
+
+paste("Individuals:", threshold_ind*100, "% missing data", sep=" ")
+
+
+paste("SNP loci with minor allele frequency <", maf)
+```
+
+```{r include=T}
+### Data set details after data filtering:
+
+paste(nInd(obj), "individuals", "and", nLoc(obj), "loci", sep=" ")
+```
+
+```{r, include=T}
+barplot.missing(obj)
+```
+
+```{r cache=T, dpi=300, fig.width=5, fig.height=3, include=T}
+a2 <- barplot.N.alleles(obj)
+a2$plot
+```
+
+### Private alleles per cohort - level Country/Pop
+```{r, include=T}
+priv <- poppr::private_alleles(obj, report = "data.frame")
+
+if(is.data.frame(priv)){
+  
+ggplot(priv) + geom_tile(aes(x = population,
+                                y = allele,
+                                fill = count)) +
+  ggtitle("Private alleles per population") +
+  scale_fill_viridis_c()
+  
+}
+```
+
+### Private alleles per cohort - level Country
+```{r, include=T}
+setPop(obj) <- ~Country
+
+priv <- poppr::private_alleles(obj, 
+                                  report = "data.frame")
+
+
+if(is.data.frame(priv)){
+
+ggplot(priv) + geom_tile(aes(x = population,
+                                y = allele,
+                                fill = count)) +
+  ggtitle("Private alleles per cohort") +
+  scale_fill_viridis_c()
+  
+}
+
+setPop(obj) <- ~Country/Pop
+```
+
+```{r}
+setPop(obj) <- ~Country
+
+priv_count2 <- poppr::private_alleles(obj, 
+                                  report = "data.frame",
+                                  count.alleles = F)
+priv_count2$maf <- maf
+
+# ggplot(priv_count, aes(x=population, y=count)) +
+#   geom_bar(stat="identity")
+
+setPop(obj) <- ~Country/Pop
+```
+
+# Case 3
+
+```{r}
+threshold_loci <- 0.1
+threshold_ind <- 0.1
+maf <- 0.01
+
+obj <- import.snp.fagus(threshold_loci = threshold_loci,
+                        threshold_ind = threshold_ind,
+                        maf = maf)
+```
+
+### Data filtering thresholds
+```{r include=T}
+paste("SNP loci:", threshold_loci*100, 
+      "% missing data across populations", sep=" ")
+
+
+paste("Individuals:", threshold_ind*100, "% missing data", sep=" ")
+
+
+paste("SNP loci with minor allele frequency <", maf)
+```
+
+```{r include=T}
+### Data set details after data filtering:
+
+paste(nInd(obj), "individuals", "and", nLoc(obj), "loci", sep=" ")
+```
+
+```{r, include=T}
+barplot.missing(obj)
+```
+
+```{r cache=T, dpi=300, fig.width=5, fig.height=3, include=T}
+a3 <- barplot.N.alleles(obj)
+a3$plot
+```
+
+### Private alleles per cohort - level Country/Pop
+```{r, include=T}
+priv <- poppr::private_alleles(obj, report = "data.frame")
+
+if(is.data.frame(priv)){
+  
+ggplot(priv) + geom_tile(aes(x = population,
+                                y = allele,
+                                fill = count)) +
+  ggtitle("Private alleles per population") +
+  scale_fill_viridis_c()
+  
+}
+```
+
+### Private alleles per cohort - level Country
+```{r, include=T}
+setPop(obj) <- ~Country
+
+priv <- poppr::private_alleles(obj, 
+                                  report = "data.frame")
+
+
+if(is.data.frame(priv)){
+
+ggplot(priv) + geom_tile(aes(x = population,
+                                y = allele,
+                                fill = count)) +
+  ggtitle("Private alleles per cohort") +
+  scale_fill_viridis_c()
+  
+}
+
+setPop(obj) <- ~Country/Pop
+```
+
+```{r}
+setPop(obj) <- ~Country
+
+priv_count3 <- poppr::private_alleles(obj, 
+                                  report = "data.frame",
+                                  count.alleles = F)
+priv_count3$maf <- maf
+
+# ggplot(priv_count, aes(x=population, y=count)) +
+#   geom_bar(stat="identity")
+
+setPop(obj) <- ~Country/Pop
+```
+
+# Case 4
+
+```{r}
+threshold_loci <- 0.1
+threshold_ind <- 0.1
+maf <- 0
+
+obj <- import.snp.fagus(threshold_loci = threshold_loci,
+                        threshold_ind = threshold_ind,
+                        maf = maf)
+```
+
+### Data filtering thresholds
+```{r include=T}
+paste("SNP loci:", threshold_loci*100, 
+      "% missing data across populations", sep=" ")
+
+
+paste("Individuals:", threshold_ind*100, "% missing data", sep=" ")
+
+
+paste("SNP loci with minor allele frequency <", maf)
+```
+
+```{r include=T}
+### Data set details after data filtering:
+
+paste(nInd(obj), "individuals", "and", nLoc(obj), "loci", sep=" ")
+```
+
+```{r, include=T}
+barplot.missing(obj)
+```
+
+```{r cache=T, dpi=300, fig.width=5, fig.height=3, include=T}
+a4 <- barplot.N.alleles(obj)
+a4$plot
+```
+
+### Private alleles per cohort - level Country/Pop
+```{r, include=T}
+priv <- poppr::private_alleles(obj, report = "data.frame")
+
+if(is.data.frame(priv)){
+  
+ggplot(priv) + geom_tile(aes(x = population,
+                                y = allele,
+                                fill = count)) +
+  ggtitle("Private alleles per population") +
+  scale_fill_viridis_c()
+  
+}
+```
+
+### Private alleles per cohort - level Country
+```{r, include=T}
+setPop(obj) <- ~Country
+
+priv <- poppr::private_alleles(obj, 
+                                  report = "data.frame")
+
+
+if(is.data.frame(priv)){
+
+ggplot(priv) + geom_tile(aes(x = population,
+                                y = allele,
+                                fill = count)) +
+  ggtitle("Private alleles per cohort") +
+  scale_fill_viridis_c()
+  
+}
+
+setPop(obj) <- ~Country/Pop
+```
+
+```{r}
+setPop(obj) <- ~Country
+
+priv_count4 <- poppr::private_alleles(obj, 
+                                  report = "data.frame",
+                                  count.alleles = F)
+priv_count4$maf <- maf
+
+# ggplot(priv_count, aes(x=population, y=count)) +
+#   geom_bar(stat="identity")
+
+setPop(obj) <- ~Country/Pop
+```
+
+
+
+# Overall
+
+```{r}
+priv_count1 <- as.data.frame(priv_count1)
+# priv_count1 <- priv_count1 %>% 
+#   add_column("population") %>%
+#   add_column("count") %>% 
+#   add_column("allele")
+# priv_count1 <- priv_count1 %>%
+#   add_row(population = "DE", count = 0, allele=0) %>%
+#   add_row(population = "GR", count = 0, allele=0) %>%
+#   add_row(population = "SI", count = 0, allele=0)
+priv_count1$population <- NA
+priv_count1$allele <- NA
+priv_count1$count <-0
+
+priv_count2 <- as.data.frame(priv_count2)
+# priv_count2 <- priv_count2 %>% 
+#   add_column("population") %>% 
+#   add_column("count") %>% 
+#   add_column("allele")
+# priv_count2 <- priv_count2 %>% 
+#   add_row(population = "DE", count = 0, allele=0) %>% 
+#   add_row(population = "GR", count = 0, allele=0) %>% 
+#   add_row(population = "SI", count = 0, allele=0)
+
+priv_count2$population <- NA
+priv_count2$allele <- NA
+priv_count2$count <-0
+```
+
+
+```{r, include=T, fig.width=5, fig.height=2.5}
+priv_count <- rbind(priv_count1,
+                    priv_count2,
+                    priv_count3,
+                    priv_count4)
+
+# ggplot(priv_count, aes(x=population, y=count)) +
+#   geom_bar(stat="identity") +
+#   facet_wrap(~maf)
+
+priv_count <- priv_count %>% 
+  filter(count > 0) %>% 
+  group_by(maf) %>% 
+  summarise(count = n())
+
+priv_count <- priv_count %>% 
+  add_row(maf = 0.03, count = 0) %>% 
+  add_row(maf = 0.05, count = 0)
+
+ggplot(priv_count, aes(x=as.factor(maf), y=count)) +
+  geom_bar(stat="identity",
+           # color = "black", fill = "white",
+                 width = .5) +
+        ggtitle("Total Number of Private Alleles per MAF Threshold") +
+  theme_classic() +
+  labs(x = "MAF") + 
+  theme(axis.text.x = element_text(size = 14), 
+    axis.text.y = element_text(size = 14)) +
+  scale_y_continuous(breaks = seq(0, 8, 2))
+  
+
+
+ggplot(priv_count, aes(x=as.factor(maf), y=count, group=1)) +
+  geom_point()+ 
+  geom_line(color="black")
+```
+
+```{r fig.width=5, fig.height=2.5}
+a <- rbind(a1[["data"]], a2[["data"]], a3[["data"]], a4[["data"]])
+
+p1 <- ggplot(a, aes(x=as.factor(maf), y=count)) +
+      geom_bar(stat="identity",
+               # color = "black", fill = "white",
+                     width = .5) +
+            ggtitle("Total Number of Alleles per MAF Threshold") +
+      theme_classic()
+
+p1 +labs(x = "MAF") + 
+    theme(axis.text.x = element_text(size = 14), 
+    axis.text.y = element_text(size = 14))
+
+p <- ggplot(a, aes(x=population, y=count)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~maf, ncol = 4)
+
+p + theme(plot.subtitle = element_text(vjust = 1), 
+    plot.caption = element_text(vjust = 1), 
+    axis.text.x = element_text(angle = 90))
+```
+
+
+In the previous 2 cases the missing data filter for SNP loci is applied on the whole data set (not for each population). This means that a 10% threshold will result in one or more populations ending up with higher percentage of missing data than 10% for certain loci.
+
+For the following 2 cases the missing data filter for SNP loci is applied for each population.
+
+# Case 3
+
+```{r}
+threshold_loci <- 0.1
+threshold_ind <- 0.1
+maf <- 0.05
+
+obj <- import.snp.fagus2(threshold_loci = threshold_loci,
+                        threshold_ind = threshold_ind,
+                        maf = maf)
+```
+
+### Data filtering thresholds
+```{r include=T}
+paste("SNP loci:", threshold_loci*100, 
+      "% missing data across populations", sep=" ")
+
+
+paste("Individuals:", threshold_ind*100, "% missing data", sep=" ")
+
+
+paste("SNP loci with minor allele frequency <", maf)
+```
+
+```{r include=T}
+### Data set details after data filtering:
+
+paste(nInd(obj), "individuals", "and", nLoc(obj), "loci", sep=" ")
+```
+
+```{r, include=T}
+barplot.missing(obj)
+```
+
+```{r cache=T, dpi=300, fig.width=5, fig.height=3, include=T}
+a3 <- barplot.N.alleles(obj)
+a3$plot
+```
+
+# Case 4 - No MAF filter
+
+```{r}
+threshold_loci <- 0.1
+threshold_ind <- 0.1
+maf <- 0
+
+obj <- import.snp.fagus2(threshold_loci = threshold_loci,
+                        threshold_ind = threshold_ind,
+                        maf = maf)
+```
+
+### Data filtering thresholds
+```{r include=T}
+paste("SNP loci:", threshold_loci*100, 
+      "% missing data across populations", sep=" ")
+
+
+paste("Individuals:", threshold_ind*100, "% missing data", sep=" ")
+
+
+paste("SNP loci with minor allele frequency <", maf)
+```
+
+```{r include=T}
+### Data set details after data filtering:
+
+paste(nInd(obj), "individuals", "and", nLoc(obj), "loci", sep=" ")
+```
+
+```{r, include=T}
+barplot.missing(obj)
+```
+
+```{r cache=T, dpi=300, fig.width=5, fig.height=3, include=T}
+a4 <- barplot.N.alleles(obj)
+a4$plot
+```

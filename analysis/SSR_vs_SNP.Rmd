@@ -1,0 +1,513 @@
+---
+title: "LifeGenMon Abies SSR vs SNP"
+author: "Nikos Tourvas"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+bibliography: library.bib
+output:
+  html_notebook:
+    code_folding: hide
+    theme: united
+    toc: yes
+    toc_float: yes
+    toc_depth: 3
+  html_document:
+    code_folding: hide
+    theme: united
+    toc: yes
+    ## toc_float: yes
+  pdf_document:
+    toc: yes
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include=FALSE)
+```
+
+# SNP data set
+```{r}
+source("import_snp.R")
+```
+
+
+```{r}
+obj_SNP <- import.snp.fagus(0.1, 0.1, 0)
+```
+
+
+### Data set details after data filtering:
+```{r include=T}
+paste(nInd(obj_SNP), "individuals", "and", nLoc(obj_SNP), "loci", sep=" ")
+```
+
+
+
+# SSR data set
+
+```{r}
+library(popprxl)
+
+obj_SSR <- read.genalexcel(
+  "../data/LGM_DE_SI_GR_final.xlsx",   # name of excel file
+  sheet = "Fagus",             # name of sheet where the genotypes reside
+  genclone = F) 
+
+
+splitStrata(obj_SSR) <- ~Country/Pop
+```
+
+
+
+
+
+# Summary statistics
+```{r summary_statistics, cache=T}
+
+## functions
+
+###### basic statistics and their SEs
+table_out <- function(obj, variable, name){
+  
+means <- colMeans(variable, na.rm=T)
+out <- c(means, mean(variable, na.rm = T))
+
+out <- as.data.frame(out)
+Pops <- c(popNames(obj), "Total")
+rownames(out) <- Pops
+colnames(out) <- name
+
+sem_out <- apply(variable, 2, function(x) sd(x) / sqrt(length(x))) 
+  ## 2 means work along columns
+sem_out_mean <- sd(variable) / sqrt(length(variable))
+
+sem_out <- as.data.frame(c(sem_out, sem_out_mean))
+rownames(sem_out) <- Pops
+colnames(sem_out) <- paste("SE", name, sep = "_")
+
+table_out <- cbind(out, sem_out)
+
+return(table_out)
+}
+
+
+
+
+###### basic statistics reported from poppr and their SEs
+poppr2hierfstat_out <- function(obj, variable){
+  
+obj_list <- seppop(obj)
+  
+stats_poppr <- list()
+for(i in 1: length(obj_list)){
+  stats_poppr[[i]] <- locus_table(obj_list[[i]], information = F)
+}
+
+table_out <- list()
+for(i in 1:length(obj_list))
+table_out[[i]] <- stats_poppr[[i]][-nrow(stats_poppr[[1]]), variable]
+
+table_out <- as.matrix(as.data.frame(table_out))
+colnames(table_out) <- popNames(obj)
+
+return(table_out)
+}
+
+```
+
+
+## SSR
+```{r}
+library(poppr)
+library(hierfstat)
+library(reshape2)
+
+## N
+N_by_locus <- basic.stats(obj_SSR)[["n.ind.samp"]]
+obj_list <- seppop(obj_SSR)
+N <- list()
+for(i in 1:length(obj_list)){
+        N[[i]] <- length(obj_list[[i]]@pop)
+}
+N <- melt(N)
+N <- c(N[,1], sum(N[,1]))
+
+## na
+na_by_locus <- poppr2hierfstat_out(obj_SSR, "allele")
+na <- table_out(obj_SSR, na_by_locus, "na")
+
+
+## uHe
+uHe_by_locus <- poppr2hierfstat_out(obj_SSR, "Hexp")
+uHe <- table_out(obj_SSR, uHe_by_locus, "uHe")
+
+## Ho
+Ho_by_locus <- basic.stats(obj_SSR)[["Ho"]]
+Ho <- table_out(obj_SSR, Ho_by_locus, "Ho")
+
+## ne
+ne_by_locus_Hs <- 1 / (1 - (basic.stats(obj_SSR)[["Hs"]]))
+ne_Hs <- table_out(obj_SSR, ne_by_locus_Hs, "ne")
+
+## ## ne
+## ne_by_locus_He <- 1 / (1 - (basic.stats(obj_SSR)[["Hs"]]))
+## ne_Hs <- table_out(obj_SSR, ne_by_locus, "ne")
+
+## Fis
+Fis_by_locus <- basic.stats(obj_SSR)[["Fis"]]
+Fis <- table_out(obj_SSR, Fis_by_locus, "Fis") ## better use boot.ppfis
+
+## Private alleles
+PA <- rowSums(poppr::private_alleles(obj_SSR, count.alleles=F))
+PA <- data.frame(PA)
+PA <- rbind(PA, Total=colSums(PA))
+```
+
+```{r SummaryTable, cache=T, include=T}
+library(kableExtra)
+
+summary_df <- cbind(N, Ho[,1], uHe[,1], Fis[,1], PA)
+rownames(summary_df) <- c(popNames(obj_SSR), "Total")
+colnames(summary_df) <- c("N", "Ho", "uHe", "Fis", "PA")
+summary_df <- round(as.data.frame(summary_df), digits = 3)
+
+knitr::kable(summary_df, "html", digits = 3) %>% 
+        kable_styling(bootstrap_options = "striped", full_width = F)
+
+## summary_df2 <- cbind(N, na, ne_Hs, Ho, uHe)
+## summary_df2
+```
+
+N: number of individuals  
+Ho: observed heterozygosity  
+uHe: unbiased expected heterozygosity - gene diversity [@nei_EstimationAverageHeterozygosity_1978]
+
+Fis: inbreeding coefficient [@nei_MolecularEvolutionaryGenetics_1987]
+
+PA: private alleles
+
+```{r include=T}
+setPop(obj_SSR) <- ~Country
+
+# PA <- rep(0, length(popNames(obj_SSR)))
+PA <- rowSums(poppr::private_alleles(obj_SSR, count.alleles=F))
+PA <- data.frame(PA)
+PA <- rbind(PA, Total=colSums(PA))
+
+knitr::kable(PA, "html", digits = 3, 
+             caption="Private alleles per cohort") %>% 
+        kable_styling(bootstrap_options = "striped", full_width = F)
+                      
+
+setPop(obj_SSR) <- ~Country/Pop
+```
+
+## SNP
+```{r}
+library(poppr)
+library(hierfstat)
+library(reshape2)
+
+## N
+N_by_locus <- basic.stats(obj_SNP)[["n.ind.samp"]]
+obj_list <- seppop(obj_SNP)
+N <- list()
+for(i in 1:length(obj_list)){
+        N[[i]] <- length(obj_list[[i]]@pop)
+}
+N <- melt(N)
+N <- c(N[,1], sum(N[,1]))
+
+## na
+na_by_locus <- poppr2hierfstat_out(obj_SNP, "allele")
+na <- table_out(obj_SNP, na_by_locus, "na")
+
+
+## uHe
+uHe_by_locus <- poppr2hierfstat_out(obj_SNP, "Hexp")
+uHe <- table_out(obj_SNP, uHe_by_locus, "uHe")
+
+## Ho
+Ho_by_locus <- basic.stats(obj_SNP)[["Ho"]]
+Ho <- table_out(obj_SNP, Ho_by_locus, "Ho")
+
+## ne
+ne_by_locus_Hs <- 1 / (1 - (basic.stats(obj_SNP)[["Hs"]]))
+ne_Hs <- table_out(obj_SNP, ne_by_locus_Hs, "ne")
+
+## ## ne
+## ne_by_locus_He <- 1 / (1 - (basic.stats(obj_SNP)[["Hs"]]))
+## ne_Hs <- table_out(obj_SNP, ne_by_locus, "ne")
+
+## Fis
+Fis_by_locus <- basic.stats(obj_SNP)[["Fis"]]
+Fis <- table_out(obj_SNP, Fis_by_locus, "Fis") ## better use boot.ppfis
+
+## Private alleles
+
+PA_SNP_p <- poppr::private_alleles(obj_SNP, count.alleles=F)
+if(is.numeric(PA_SNP_p)){
+  PA_SNP <- rowSums(PA_SNP_p)
+  PA_SNP <- data.frame(PA)
+  PA <- rbind(PA, Total=colSums(PA_SNP))
+}else {
+  PA_SNP <- rep(0, length(popNames(obj_SNP)) + 1 )
+}
+
+```
+
+```{r SummaryTable_SNP, cache=T, include=T}
+library(kableExtra)
+
+summary_df <- cbind(N, Ho[,1], uHe[,1], Fis[,1], PA_SNP)
+rownames(summary_df) <- c(popNames(obj_SNP), "Total")
+colnames(summary_df) <- c("N", "Ho", "uHe", "Fis", "PA")
+summary_df <- round(as.data.frame(summary_df), digits = 3)
+
+knitr::kable(summary_df, "html", digits = 3) %>% 
+        kable_styling(bootstrap_options = "striped", full_width = F)
+
+## summary_df2 <- cbind(N, na, ne_Hs, Ho, uHe)
+## summary_df2
+```
+
+N: number of individuals  
+Ho: observed heterozygosity  
+uHe: unbiased expected heterozygosity - gene diversity [@nei_EstimationAverageHeterozygosity_1978]
+
+Fis: inbreeding coefficient [@nei_MolecularEvolutionaryGenetics_1987]
+
+PA: private alleles
+
+```{r include=T}
+setPop(obj_SNP) <- ~Country
+
+# PA_SNP_country <- rep(0, length(popNames(obj_SNP)))
+PA_SNP_country <- poppr::private_alleles(obj_SNP, count.alleles=F)
+
+if(is.numeric(PA_SNP_country)){
+  PA_SNP_country <- rowSums(PA_SNP_country)
+  PA_SNP_country <- data.frame(PA_SNP_country)
+  PA_SNP_country <- rbind(PA_SNP_country, Total=colSums(PA_SNP_country))
+
+knitr::kable(PA_SNP_country, "html", digits = 3, 
+             caption="Private alleles per cohort") %>% 
+        kable_styling(bootstrap_options = "striped", full_width = F)
+                      
+}
+
+
+setPop(obj_SNP) <- ~Country/Pop
+```
+
+# Mantel test comparing Nei distance matrices obtained from SSR and SNP
+```{r mantel, cache=T, dpi=300, include=T}
+
+# Restrict SSR data set to adults and regen
+obj_SSR_sub <- popsub(obj_SSR, blacklist = c("GR_Seed",
+                                             "DE_Seed",
+                                             "SL_Seed"))
+# # create list of population names
+# PopNames <- c("DE_A", "DE_NR",
+#               "SI_A", "SI_NR",
+#               "GR_A", "GR_NR")
+# 
+# # set pop names in genind object
+# popNames(obj_SSR_sub) <- PopNames
+
+
+# compute distance
+D_SNP <- genet.dist(obj_SNP, method = "Ds")
+
+D_SSR <- genet.dist(obj_SSR_sub, method = "Ds")
+
+mantel <- mantel.randtest(D_SNP, D_SSR) 
+mantel
+
+# plot(ibd)
+
+# library(MASS)
+# dens <- kde2d(Dgeo,Dgen, n=300)
+# myPal <- colorRampPalette(c("white","blue","gold", "orange", "red"))
+# plot(Dgeo, Dgen, pch=20,cex=.5,
+#      ylab="Cavalli-Sforza genetic distance",
+#      xlab="Geographical distance (euclidean)")
+# image(dens, col=transp(myPal(300),.7), add=TRUE)
+# abline(lm(Dgen~Dgeo))
+# title("Isolation by distance")
+
+plot(D_SSR, D_SNP, pch=20,cex=1,
+     ylab="Nei genetic distance SNP",
+     xlab="Nei genetic distance SSR")
+abline(lm(D_SNP~D_SSR))
+title("Mantel test of Distance Matrices")
+```
+
+```{r include=T}
+library(ecodist)
+
+ecodist::mantel(D_SNP ~ D_SSR)
+```
+
+```{r fig.height=4, fig.width=4}
+library(vegan)
+
+vegan::mantel(D_SNP, D_SSR, method = "pearson", permutations = 999)
+
+plot(D_SSR, D_SNP, pch=20,cex=1,
+     ylab="Nei genetic distance SNP",
+     xlab="Nei genetic distance SSR")
+abline(lm(D_SNP~D_SSR))
+title("Mantel test of Distance Matrices")
+```
+
+
+# Probability of assignment using DAPC [@jombart_DiscriminantAnalysisPrincipal_2010a]
+
+## calculate DAPC for different number of SSR loci
+```{r}
+setPop(obj_SSR) <- ~Country
+
+loci <- sort(nAll(obj_SSR)) # vector containing loci from least to
+# most polymorphic according to thlocie pooled dataset from all countries and pops
+loci <- names(loci) # transform named vector to vector of names
+
+data <- list()
+for(i in 1:length(loci)){
+  data[[length(loci)+1-i]] <- obj_SSR[, loc = loci[i:length(loci)]]
+}
+```
+
+## SSR
+```{r}
+dapc_SSR <- list()
+for(i in 1:length(loci)){
+  dapc_SSR[[i]] <- dapc(data[[i]], obj_SSR@pop, 
+                        n.pca=round(nrow(obj_SSR@tab)/1.5), n.da=5)
+}
+```
+
+## SNP
+```{r}
+setPop(obj_SNP) <- ~Country
+
+dapc_SNP <- dapc(obj_SNP, obj_SNP@pop, n.pca=round(nrow(obj_SNP@tab)/1.5), n.da=5)
+```
+
+## plot
+```{r include=T}
+# code adapted from http://www.mountainmanmaier.com/software/ms_vs_ddradseq/
+thresh <- list()
+  for(i in 1:length(loci)){
+    thresh[[i]] <- summary(dapc_SSR[[i]])$assign.prop
+  }
+
+thresh <- unlist(thresh)
+    
+rad.power <- data.frame(nloc=numeric(0), mean=numeric(0), CIlow=numeric(0), CIhigh=numeric(0))
+gi.test.1 <- obj_SNP
+for (i in c(25, 40, 60, 80, 100, 120, 139)) {
+  CIreps <- c()
+  for (j in 1:10) {
+    gi.test.2 <- gi.test.1[,loc=sample(1:length(unique(gi.test.1@loc.fac)), i)]
+    dapc.test <- dapc(gi.test.2, gi.test.2@pop, n.pca=round(nrow(gi.test.2@tab)/1.5), n.da=5)
+    CIreps <- c(CIreps, summary(dapc.test)$assign.prop)
+  }
+  assign.mean <- mean(CIreps)
+  error <- qt(0.975,df=9)*sd(CIreps)/sqrt(10)
+  CIlow <- assign.mean - error
+  CIhigh <- assign.mean + error
+  rad.power <- rbind(rad.power, c(i, assign.mean, CIlow, CIhigh))
+  names(rad.power) <- c("nloc", "mean", "CIlow", "CIhigh")
+}
+```
+
+```{r}
+ggplot(rad.power, aes(x=nloc, y=mean)) + 
+  geom_ribbon(aes(ymin=CIlow, ymax=CIhigh), alpha=0.2) +
+  geom_line(aes(y=mean), colour="blue") + 
+  geom_point(color="black") +
+  geom_hline(aes(yintercept = thresh[[3]], linetype="a", colour="a")) +
+  geom_hline(aes(yintercept = thresh[[5]], linetype="a", colour="a")) +
+  geom_hline(aes(yintercept = thresh[[11]], linetype="a", colour="a")) +
+  scale_x_continuous(breaks=c(0, 40, 80, 120, 160, 185)) +
+  scale_y_continuous(breaks=seq(0.30, 1, 0.05)) +
+  ggtitle("Power of SNP Loci to Discriminate Cohorts") +
+  xlab("Number of SNP Loci") + ylab("Individuals Correctly Assigned (%)") +
+  theme_bw() + theme(plot.title = element_text(hjust = 0.5), legend.position="none")
+```
+Red line: assignment ability of common SSR data set of 3, 5, 11 loci based on DAPC
+
+
+
+```{r}
+setPop(obj_SSR_sub) <- ~Country/Pop
+setPop(obj_SNP) <- ~Country/Pop
+```
+
+# 2 Probability of assignment using DAPC [@jombart_DiscriminantAnalysisPrincipal_2010a]
+```{r}
+setPop(obj_SSR) <- ~Country
+setPop(obj_SNP) <- ~Country
+
+
+dapc_SSR <- dapc(obj_SSR, obj_SSR@pop, n.pca=round(nrow(obj_SSR@tab)/1.5), n.da=5)
+dapc_SNP <- dapc(obj_SNP, obj_SNP@pop, n.pca=round(nrow(obj_SNP@tab)/1.5), n.da=5)
+```
+
+```{r}
+par(mfrow=c(1,2)) # Set plotting window for two side-by-side plots
+myCol <- topo.colors(3)
+
+scatter(dapc_SSR, scree.da=F, bg="white", pch=20, cell=0, cstar=0, col=myCol, solid=.2, cex=0.5, clab=0, leg=T, txt.leg=c(as.character(unique(obj_SSR$pop))), 
+        cleg=0.55, posi.leg="bottomright")
+
+scatter(dapc_SNP, scree.da=F, bg="white", pch=20, cell=0, cstar=0, col=myCol, solid=.2, cex=1, clab=0, leg=T, txt.leg=c(as.character(unique(obj_SNP$pop))), 
+        cleg=0.55, posi.leg="bottomright")
+```
+
+```{r}
+par(mfrow=c(1,2)) # Set plotting window for two side-by-side plots
+table.value(table(dapc_SSR$assign, obj_SSR@pop), col.lab=levels(obj_SSR@pop))
+table.value(table(dapc_SNP$assign, obj_SNP@pop), col.lab=levels(obj_SNP@pop))
+```
+
+```{r include=T}
+# code adapted from http://www.mountainmanmaier.com/software/ms_vs_ddradseq/
+thresh <- summary(dapc_SSR)$assign.prop
+rad.power <- data.frame(nloc=numeric(0), mean=numeric(0), CIlow=numeric(0), CIhigh=numeric(0))
+gi.test.1 <- obj_SNP
+for (i in seq(10, length(locNames(obj_SNP)), 20)) {
+  CIreps <- c()
+  for (j in 1:10) {
+    gi.test.2 <- gi.test.1[,loc=sample(1:length(unique(gi.test.1@loc.fac)), i)]
+    dapc.test <- dapc(gi.test.2, gi.test.2@pop, n.pca=round(nrow(gi.test.2@tab)/1.5), n.da=5)
+    CIreps <- c(CIreps, summary(dapc.test)$assign.prop)
+  }
+  assign.mean <- mean(CIreps)
+  error <- qt(0.975,df=9)*sd(CIreps)/sqrt(10)
+  CIlow <- assign.mean - error
+  CIhigh <- assign.mean + error
+  rad.power <- rbind(rad.power, c(i, assign.mean, CIlow, CIhigh))
+  names(rad.power) <- c("nloc", "mean", "CIlow", "CIhigh")
+}
+
+ggplot(rad.power, aes(x=nloc, y=mean)) + 
+  geom_ribbon(aes(ymin=CIlow, ymax=CIhigh), alpha=0.2) +
+  geom_line(aes(y=mean), colour="blue") + 
+  geom_point(color="black") +
+  geom_hline(aes(yintercept = thresh, linetype="a", colour="a")) +
+  scale_x_continuous(breaks=c(0, 40, 80, 120, 160, 185)) +
+  scale_y_continuous(breaks=seq(0.4, 1.0, 0.05)) +
+  ggtitle("Power of SNP Loci to Discriminate Cohorts") +
+  xlab("Number of SNP Loci") + ylab("Proportion of Individuals Correctly Assigned") +
+  theme_bw() + theme(plot.title = element_text(hjust = 0.5), legend.position="none")
+```
+Red line: assignment ability of common SSR data set of 11 loci based on DAPC
+
+```{r}
+setPop(obj_SSR) <- ~Country/Pop
+setPop(obj_SNP) <- ~Country/Pop
+```
+
+
+# Bibliography

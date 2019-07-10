@@ -227,7 +227,7 @@ sudo chmod +x /home/rstudio/software/bayescan/BayeScan2.1/binaries/BayeScan2.1_l
 
 mkdir ../results/Bayescan_out/
 
-/home/rstudio/software/bayescan/BayeScan2.1/binaries/BayeScan2.1_linux64bits ../data/obj.bsc -od ../results/Bayescan_out/
+/home/rstudio/software/bayescan/BayeScan2.1/binaries/BayeScan2.1_linux64bits ../data/obj.bsc -pr_odds 2 -od ../results/Bayescan_out/ 
 ```
 
 ```{r plot_R}
@@ -411,6 +411,12 @@ Reduce(intersect, list(outliers_pcadapt,
                        outliers_fdist2_hier))
 ```
 No common outlier loci detected
+
+#### pcadapt and bayescan
+```{r, include=T}
+Reduce(intersect, list(outliers_pcadapt,
+                       outliers_bayescan))
+```
 
 <!-- # Logistic regression : linking outliers and environmental factor -->
 <!-- https://popgen.nescent.org/2016-01-26-SNP-selection.html -->
